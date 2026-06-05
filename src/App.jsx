@@ -199,62 +199,117 @@ export default function App() {
 
   // ── Wake word ─────────────────────────────────────────────────────────────
   const stopWake = useCallback(() => {
-    if (wakeRecRef.current) { try { wakeRecRef.current.abort(); } catch {} wakeRecRef.current = null; }
+    console.log('[SOLIS wake] stopWake — aborting recognition');
+    if (wakeRecRef.current) {
+      try { wakeRecRef.current.abort(); } catch (err) { console.log('[SOLIS wake] abort error:', err.message); }
+      wakeRecRef.current = null;
+    }
     setWakeArmed(false);
   }, []);
 
   const startWake = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR || !wakeEnRef.current || wakeRecRef.current || meetRef.current) return;
+    if (!SR)                   { console.log('[SOLIS wake] SpeechRecognition not supported'); return; }
+    if (!wakeEnRef.current)    { console.log('[SOLIS wake] skipped — wake disabled');         return; }
+    if (wakeRecRef.current)    { console.log('[SOLIS wake] skipped — already running');        return; }
+    if (meetRef.current)       { console.log('[SOLIS wake] skipped — meeting mode');           return; }
+    // Guard: do not start while voice input or TTS is active — we would fight the mic
+    if (uiRef.current !== 'idle') { console.log('[SOLIS wake] skipped — uiState:', uiRef.current); return; }
 
+    console.log('[SOLIS wake] Creating recogniser…');
     const rec = new SR();
     rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 3;
 
-    rec.onstart  = () => { setWakeArmed(true); };
+    rec.onstart = () => {
+      console.log('[SOLIS wake] Armed — listening for "Hey SOLIS"');
+      setWakeArmed(true);
+    };
+
     rec.onresult = (e) => {
       const latest = e.results[e.results.length - 1];
+      // Log every heard phrase so we can confirm speech recognition is firing at all
+      const alts = Array.from({ length: latest.length }, (_, i) => latest[i].transcript);
+      console.log('[SOLIS wake] Heard:', alts.join(' | '), latest.isFinal ? '(final)' : '(interim)');
+
       if (uiRef.current !== 'idle') return;
+
       for (let i = 0; i < latest.length; i++) {
         if (WAKE_RE.test(latest[i].transcript)) {
+          console.log('[SOLIS wake] WAKE WORD MATCHED:', latest[i].transcript);
           setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
           stopWake();
-          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 200);
+          // Small delay lets stopWake/abort fully settle before we claim the mic again
+          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 250);
           return;
         }
       }
     };
+
     rec.onerror = (e) => {
+      console.log('[SOLIS wake] Error:', e.error);
       wakeRecRef.current = null; setWakeArmed(false);
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') return;
-      if (wakeEnRef.current) setTimeout(() => { if (wakeEnRef.current) startWake(); }, 1000);
+      // not-allowed means mic permission denied — don't retry, it won't help
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        console.log('[SOLIS wake] Mic permission denied — stopping wake word');
+        return;
+      }
+      // Retry other transient errors (aborted, network) after a pause
+      if (wakeEnRef.current) {
+        console.log('[SOLIS wake] Retrying in 1 s…');
+        setTimeout(() => { if (wakeEnRef.current && !wakeRecRef.current) startWake(); }, 1000);
+      }
     };
+
     rec.onend = () => {
+      console.log('[SOLIS wake] Recognition ended (wakeEnabled:', wakeEnRef.current, 'uiState:', uiRef.current, ')');
       wakeRecRef.current = null; setWakeArmed(false);
+      // Re-arm only when idle and still enabled — mic permission is already granted so
+      // no new user gesture is required for subsequent start() calls
       if (wakeEnRef.current && uiRef.current === 'idle' && !meetRef.current) {
-        setTimeout(() => { if (wakeEnRef.current) startWake(); }, 400);
+        console.log('[SOLIS wake] Re-arming in 350 ms…');
+        setTimeout(() => {
+          if (wakeEnRef.current && !wakeRecRef.current && uiRef.current === 'idle') startWake();
+        }, 350);
       }
     };
 
     wakeRecRef.current = rec;
-    try { rec.start(); } catch (e) { wakeRecRef.current = null; setWakeArmed(false); }
+    console.log('[SOLIS wake] Calling rec.start()…');
+    try {
+      rec.start();
+    } catch (err) {
+      console.log('[SOLIS wake] rec.start() threw:', err.message);
+      wakeRecRef.current = null; setWakeArmed(false);
+    }
   }, [stopWake, startListening]);
 
-  // Re-arm after query completes
+  // Re-arm when returning to idle after a query (the onend path doesn't cover this because
+  // the recogniser was already stopped before the query ran)
   useEffect(() => {
     if (uiState === 'idle' && wakeEnabled && !wakeArmed && !wakeRecRef.current && !meetingMode) {
-      const t = setTimeout(() => startWake(), 600);
+      console.log('[SOLIS wake] useEffect: idle+enabled — scheduling re-arm');
+      const t = setTimeout(() => {
+        if (wakeEnRef.current && !wakeRecRef.current && uiRef.current === 'idle') startWake();
+      }, 700);
       return () => clearTimeout(t);
     }
-    if (uiState !== 'idle' && uiState !== 'agents' && wakeArmed) stopWake();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uiState, wakeEnabled, meetingMode]);
 
-  // Toggle — called inside click handler (satisfies browser user-gesture requirement)
+  // Toggle — onClick fires synchronously within a user gesture, satisfying the browser's
+  // requirement that the first SpeechRecognition.start() call comes from user interaction.
   const toggleWake = useCallback(() => {
     const next = !wakeEnabled;
+    console.log('[SOLIS wake] toggleWake — next:', next);
     setWakeEnabled(next); wakeEnRef.current = next;
-    if (next) { startWake(); setStatusText('HEY SOLIS — ARMED'); }
-    else      { stopWake();  setStatusText('WAKE WORD OFF'); setTimeout(() => setStatusText('READY'), 2000); }
+    if (next) {
+      startWake(); // called directly inside click handler — user gesture requirement satisfied
+      setStatusText('HEY SOLIS — ARMED');
+    } else {
+      stopWake();
+      setStatusText('WAKE WORD OFF');
+      setTimeout(() => setStatusText('READY'), 2000);
+    }
   }, [wakeEnabled, startWake, stopWake]);
 
   // ── Meeting mode ──────────────────────────────────────────────────────────
