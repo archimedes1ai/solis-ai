@@ -8,7 +8,8 @@ import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis)\b/i;
+// Matches "hey solis", "hi solis", "ok solis", bare "solis", etc.
+const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis)\b/i;
 
 export default function App() {
   // ── State ─────────────────────────────────────────────────────────────────
@@ -30,13 +31,17 @@ export default function App() {
   const [wakeFlash,      setWakeFlash]      = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────────────
-  const inputRef     = useRef(null);
-  const chatEndRef   = useRef(null);
-  const fileInputRef = useRef(null);
-  const recRef       = useRef(null);
-  const wakeRecRef   = useRef(null);
-  const synthRef     = useRef(window.speechSynthesis);
-  const voicesRef    = useRef([]);
+  const inputRef      = useRef(null);
+  const chatEndRef    = useRef(null);
+  const fileInputRef  = useRef(null);
+  const recRef        = useRef(null);
+  const wakeRecRef    = useRef(null);
+  const meetRecRef    = useRef(null);
+  const synthRef      = useRef(window.speechSynthesis);
+  const voicesRef     = useRef([]);
+  // Synchronous flag — set true the moment ANY listening starts, before React flushes state.
+  // Guards startWake() so it never steals the mic while voice input is active.
+  const listeningRef  = useRef(false);
 
   // Mirror volatile state into refs so async handlers always read current values
   const uiRef        = useRef(uiState);
@@ -167,11 +172,14 @@ export default function App() {
   // ── Voice input ───────────────────────────────────────────────────────────
   const stopListening = useCallback(() => {
     recRef.current?.stop();
+    listeningRef.current = false;
     setUiState('idle'); setStatusText('READY');
   }, []);
 
   const startListening = useCallback(() => {
     if (!SR_SUPPORTED || uiRef.current !== 'idle') return;
+    // Set synchronously so wake word guard sees it before React flushes uiState
+    listeningRef.current = true;
     setError('');
     const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
@@ -182,19 +190,25 @@ export default function App() {
       const tx = Array.from(e.results).map(r => r[0].transcript).join('');
       setTranscript(tx);
       if (e.results[e.results.length - 1].isFinal) {
-        rec.stop(); setTranscript(''); setUiState('idle'); sendRef.current(tx);
+        rec.stop(); setTranscript(''); setUiState('idle');
+        listeningRef.current = false;
+        sendRef.current(tx);
       }
     };
     rec.onerror = (e) => {
+      listeningRef.current = false;
       setUiState('idle'); setTranscript('');
       if (e.error === 'not-allowed') setError('Microphone denied — allow in browser settings.');
       else if (e.error !== 'no-speech') setError(`Voice error: ${e.error}`);
       setStatusText('READY');
     };
-    rec.onend = () => { if (uiRef.current === 'listening') { setUiState('idle'); setStatusText('READY'); } };
+    rec.onend = () => {
+      listeningRef.current = false;
+      if (uiRef.current === 'listening') { setUiState('idle'); setStatusText('READY'); }
+    };
 
     recRef.current = rec;
-    try { rec.start(); } catch (e) { setError('Mic error: ' + e.message); }
+    try { rec.start(); } catch (e) { listeningRef.current = false; setError('Mic error: ' + e.message); }
   }, []);
 
   // ── Wake word ─────────────────────────────────────────────────────────────
@@ -209,11 +223,12 @@ export default function App() {
 
   const startWake = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR)                   { console.log('[SOLIS wake] SpeechRecognition not supported'); return; }
-    if (!wakeEnRef.current)    { console.log('[SOLIS wake] skipped — wake disabled');         return; }
-    if (wakeRecRef.current)    { console.log('[SOLIS wake] skipped — already running');        return; }
-    if (meetRef.current)       { console.log('[SOLIS wake] skipped — meeting mode');           return; }
-    // Guard: do not start while voice input or TTS is active — we would fight the mic
+    if (!SR)                    { console.log('[SOLIS wake] SpeechRecognition not supported'); return; }
+    if (!wakeEnRef.current)     { console.log('[SOLIS wake] skipped — wake disabled');         return; }
+    if (wakeRecRef.current)     { console.log('[SOLIS wake] skipped — already running');        return; }
+    if (meetRef.current)        { console.log('[SOLIS wake] skipped — meeting mode');           return; }
+    if (listeningRef.current)   { console.log('[SOLIS wake] skipped — mic in use (listeningRef)'); return; }
+    // Belt-and-suspenders: also check uiState for speaking/thinking
     if (uiRef.current !== 'idle') { console.log('[SOLIS wake] skipped — uiState:', uiRef.current); return; }
 
     console.log('[SOLIS wake] Creating recogniser…');
@@ -238,8 +253,8 @@ export default function App() {
           console.log('[SOLIS wake] WAKE WORD MATCHED:', latest[i].transcript);
           setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
           stopWake();
-          // Small delay lets stopWake/abort fully settle before we claim the mic again
-          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 250);
+          // 400 ms lets abort() fully settle and its onend fire before we claim the mic
+          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 400);
           return;
         }
       }
@@ -265,11 +280,12 @@ export default function App() {
       wakeRecRef.current = null; setWakeArmed(false);
       // Re-arm only when idle and still enabled — mic permission is already granted so
       // no new user gesture is required for subsequent start() calls
-      if (wakeEnRef.current && uiRef.current === 'idle' && !meetRef.current) {
-        console.log('[SOLIS wake] Re-arming in 350 ms…');
+      // 800 ms — gives startListening() time to set listeningRef and claim the mic
+      if (wakeEnRef.current && !meetRef.current) {
+        console.log('[SOLIS wake] Re-arming in 800 ms…');
         setTimeout(() => {
-          if (wakeEnRef.current && !wakeRecRef.current && uiRef.current === 'idle') startWake();
-        }, 350);
+          if (wakeEnRef.current && !wakeRecRef.current && !listeningRef.current && uiRef.current === 'idle') startWake();
+        }, 800);
       }
     };
 
@@ -313,12 +329,122 @@ export default function App() {
   }, [wakeEnabled, startWake, stopWake]);
 
   // ── Meeting mode ──────────────────────────────────────────────────────────
+  const stopMeetListening = useCallback(() => {
+    console.log('[SOLIS meet] stopMeetListening');
+    if (meetRecRef.current) {
+      try { meetRecRef.current.abort(); } catch {}
+      meetRecRef.current = null;
+    }
+    listeningRef.current = false;
+  }, []);
+
+  const startMeetListening = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR)                   { console.log('[SOLIS meet] SpeechRecognition not supported'); return; }
+    if (!meetRef.current)      { console.log('[SOLIS meet] skipped — meeting mode off');      return; }
+    if (meetRecRef.current)    { console.log('[SOLIS meet] skipped — already running');        return; }
+    if (uiRef.current !== 'idle') { console.log('[SOLIS meet] skipped — uiState:', uiRef.current); return; }
+
+    console.log('[SOLIS meet] Starting meeting recognition…');
+    listeningRef.current = true;
+
+    const rec = new SR();
+    rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+      console.log('[SOLIS meet] Listening…');
+      setUiState('listening');
+      setStatusText('MEETING — LISTENING…');
+      setTranscript('');
+    };
+
+    rec.onresult = (e) => {
+      const tx = Array.from(e.results).map(r => r[0].transcript).join('');
+      setTranscript(tx);
+      console.log('[SOLIS meet] Heard:', tx, e.results[e.results.length - 1].isFinal ? '(final)' : '(interim)');
+      if (e.results[e.results.length - 1].isFinal) {
+        console.log('[SOLIS meet] Final — sending:', tx);
+        meetRecRef.current = null;
+        rec.stop();
+        setTranscript('');
+        // uiRef.current is still 'listening' here — sendMessage allows that
+        if (tx.trim()) sendRef.current(tx);
+        else { listeningRef.current = false; setUiState('idle'); }
+      }
+    };
+
+    rec.onerror = (e) => {
+      console.log('[SOLIS meet] Error:', e.error);
+      meetRecRef.current = null;
+      listeningRef.current = false;
+      setUiState('idle'); setTranscript('');
+      if (e.error === 'not-allowed') {
+        setError('Microphone denied — allow in browser settings.');
+        return;
+      }
+      // Restart on no-speech (silence) so meeting keeps listening
+      if (meetRef.current && e.error === 'no-speech') {
+        console.log('[SOLIS meet] No speech — restarting…');
+        setTimeout(() => {
+          if (meetRef.current && !meetRecRef.current && uiRef.current === 'idle') startMeetListening();
+        }, 400);
+      }
+    };
+
+    rec.onend = () => {
+      console.log('[SOLIS meet] onend — uiState:', uiRef.current, 'meetingMode:', meetRef.current);
+      meetRecRef.current = null;
+      listeningRef.current = false;
+      // If we ended mid-listen without a final result (e.g. abort), clean up
+      if (uiRef.current === 'listening') { setUiState('idle'); }
+      // Restart only if meeting still active and we're back to idle (useEffect also handles this)
+      if (meetRef.current && uiRef.current === 'idle') {
+        console.log('[SOLIS meet] onend restart in 600 ms…');
+        setTimeout(() => {
+          if (meetRef.current && !meetRecRef.current && uiRef.current === 'idle') startMeetListening();
+        }, 600);
+      }
+    };
+
+    meetRecRef.current = rec;
+    try {
+      rec.start();
+    } catch (err) {
+      console.log('[SOLIS meet] rec.start() threw:', err.message);
+      meetRecRef.current = null;
+      listeningRef.current = false;
+    }
+  }, []);
+
+  // Restart meeting listening after SOLIS finishes responding
+  useEffect(() => {
+    if (uiState === 'idle' && meetingMode && !meetRecRef.current) {
+      console.log('[SOLIS meet] useEffect: idle in meeting mode — restarting in 800 ms');
+      const t = setTimeout(() => {
+        if (meetRef.current && !meetRecRef.current && uiRef.current === 'idle') startMeetListening();
+      }, 800);
+      return () => clearTimeout(t);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiState, meetingMode]);
+
+  // toggleMeeting — onClick is a user gesture; startMeetListening() called directly
+  // to satisfy the browser's requirement for SpeechRecognition.start()
   const toggleMeeting = useCallback(() => {
     const next = !meetingMode;
+    console.log('[SOLIS meet] toggleMeeting — next:', next);
     setMeetingMode(next); meetRef.current = next;
-    if (next) { stopWake(); setStatusText('MEETING MODE ACTIVE'); }
-    else      { setStatusText('MEETING MODE OFF'); setTimeout(() => setStatusText('READY'), 2000); }
-  }, [meetingMode, stopWake]);
+    if (next) {
+      stopWake();          // wake word and meeting can't share the mic
+      startMeetListening(); // called directly inside click handler — user gesture ✓
+      setStatusText('MEETING — LISTENING…');
+    } else {
+      stopMeetListening();
+      setUiState('idle');
+      setStatusText('MEETING MODE OFF');
+      setTimeout(() => setStatusText('READY'), 2000);
+    }
+  }, [meetingMode, stopWake, startMeetListening, stopMeetListening]);
 
   // ── File handling ─────────────────────────────────────────────────────────
   const handleFiles = useCallback(async (files) => {
