@@ -1,0 +1,374 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import Header       from './components/Header.jsx';
+import ChatPanel    from './components/ChatPanel.jsx';
+import BrainCanvas  from './components/BrainCanvas.jsx';
+import ControlPanel from './components/ControlPanel.jsx';
+import { callSolis } from './utils/apiClient.js';
+import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
+
+const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis)\b/i;
+
+export default function App() {
+  // ── State ─────────────────────────────────────────────────────────────────
+  const [messages,       setMessages]       = useState([]);
+  const [input,          setInput]          = useState('');
+  const [transcript,     setTranscript]     = useState('');
+  const [uiState,        setUiState]        = useState('idle');
+  const [activeAgents,   setActiveAgents]   = useState([]);
+  const [attachments,    setAttachments]    = useState([]);
+  const [error,          setError]          = useState('');
+  const [time,           setTime]           = useState(new Date());
+  const [statusText,     setStatusText]     = useState('READY');
+  const [lifecycleStage, setLifecycleStage] = useState('enquiry');
+  const [currentProject, setCurrentProject] = useState(null);  // eslint-disable-line
+  const [meetingMode,    setMeetingMode]    = useState(false);
+  const [voiceOut,       setVoiceOut]       = useState(!IS_MOBILE);
+  const [wakeEnabled,    setWakeEnabled]    = useState(false);
+  const [wakeArmed,      setWakeArmed]      = useState(false);
+  const [wakeFlash,      setWakeFlash]      = useState(false);
+
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  const inputRef     = useRef(null);
+  const chatEndRef   = useRef(null);
+  const fileInputRef = useRef(null);
+  const recRef       = useRef(null);
+  const wakeRecRef   = useRef(null);
+  const synthRef     = useRef(window.speechSynthesis);
+  const voicesRef    = useRef([]);
+
+  // Mirror volatile state into refs so async handlers always read current values
+  const uiRef        = useRef(uiState);
+  const wakeEnRef    = useRef(wakeEnabled);
+  const meetRef      = useRef(meetingMode);
+  const msgsRef      = useRef(messages);
+  const voiceOutRef  = useRef(voiceOut);
+  const sendRef      = useRef(null);
+
+  uiRef.current       = uiState;
+  wakeEnRef.current   = wakeEnabled;
+  meetRef.current     = meetingMode;
+  msgsRef.current     = messages;
+  voiceOutRef.current = voiceOut;
+
+  // ── Clock ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── TTS voices ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const load = () => { voicesRef.current = synthRef.current.getVoices(); };
+    load();
+    synthRef.current.addEventListener('voiceschanged', load);
+    return () => synthRef.current.removeEventListener('voiceschanged', load);
+  }, []);
+
+  // ── Scroll to bottom ──────────────────────────────────────────────────────
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, transcript]);
+
+  // ── TTS speak ─────────────────────────────────────────────────────────────
+  const speak = useCallback((text) => {
+    if (!voiceOutRef.current || !text) return;
+    synthRef.current.cancel();
+    const clean = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/^[⚠️•●▸►#]+\s*/gm, '').slice(0, 900);
+    const utt   = new SpeechSynthesisUtterance(clean);
+    const vs    = voicesRef.current;
+    const pref  = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
+               || vs.find(v => v.lang === 'en-GB')
+               || vs.find(v => v.lang.startsWith('en'));
+    if (pref) utt.voice = pref;
+    utt.rate = 0.92; utt.pitch = 0.88;
+    utt.onstart = () => { setUiState('speaking'); setStatusText('SPEAKING'); };
+    utt.onend   = () => { setUiState('idle');     setStatusText('READY'); };
+    utt.onerror = () => { setUiState('idle');     setStatusText('READY'); };
+    synthRef.current.speak(utt);
+  }, []);
+
+  // ── Send message ──────────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (textArg) => {
+    const raw  = typeof textArg === 'string' ? textArg : input;
+    const text = raw.trim();
+    if (!text && attachments.length === 0) return;
+    if (uiRef.current !== 'idle' && uiRef.current !== 'listening') return;
+
+    setError(''); setInput(''); setTranscript('');
+
+    const atts = [...attachments];
+    setAttachments([]);
+
+    const content = [];
+    for (const a of atts) {
+      if ((a.isImage || a.isPDF) && a.data) {
+        content.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } });
+      } else if (a.content) {
+        content.push({ type: 'text', text: `[Attached: ${a.name}]\n${a.content.slice(0, 8000)}` });
+      }
+    }
+    if (text) content.push({ type: 'text', text });
+
+    const msgContent  = content.length === 1 && content[0].type === 'text' ? text : content;
+    const displayText = text || atts.map(a => a.name).join(', ');
+    const userMsg     = { role: 'user', content: msgContent, displayText, attachments: atts, ts: Date.now() };
+
+    setMessages(prev => [...prev, userMsg]);
+
+    const ids        = dispatchAgents(text, lifecycleStage);
+    const dispatched = ids.map(id => getAgentById(id)).filter(Boolean).map(a => ({ ...a, status: 'running' }));
+
+    if (dispatched.length > 0) {
+      setActiveAgents(dispatched);
+      setUiState('agents');
+      setStatusText(`${dispatched.length} AGENT${dispatched.length > 1 ? 'S' : ''} DEPLOYED`);
+    } else {
+      setUiState('thinking');
+      setStatusText('PROCESSING');
+    }
+
+    try {
+      const history = msgsRef.current.slice(-20).map(m => ({ role: m.role, content: m.content }));
+      history.push({ role: 'user', content: msgContent });
+
+      const stageLbl = lifecycleStage.replace(/-/g, ' ').toUpperCase();
+      const ctx      = currentProject
+        ? `CURRENT PROJECT: ${currentProject.name}\nSTAGE: ${stageLbl}`
+        : `LIFECYCLE STAGE: ${stageLbl}`;
+      const agentCtx = dispatched.length > 0
+        ? `\nACTIVE AGENTS: ${dispatched.map(a => a.name).join(', ')}\nApply these agents' expertise in your response.`
+        : '';
+
+      const reply = await callSolis({ messages: history, system: ctx + agentCtx, maxTokens: 2500 });
+
+      setMessages(prev => [...prev, {
+        role: 'assistant', content: reply,
+        agents: dispatched.map(a => a.name), ts: Date.now(),
+      }]);
+      setActiveAgents(prev => prev.map(a => ({ ...a, status: 'done' })));
+      setTimeout(() => setActiveAgents([]), 4000);
+      setUiState('idle');
+      setStatusText('READY');
+      speak(reply);
+
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${e.message}`, ts: Date.now(), isError: true }]);
+      setActiveAgents([]);
+      setUiState('idle');
+      setStatusText('ERROR');
+      setError(e.message);
+    }
+  }, [input, attachments, lifecycleStage, currentProject, speak]);
+
+  sendRef.current = sendMessage;
+
+  // ── Voice input ───────────────────────────────────────────────────────────
+  const stopListening = useCallback(() => {
+    recRef.current?.stop();
+    setUiState('idle'); setStatusText('READY');
+  }, []);
+
+  const startListening = useCallback(() => {
+    if (!SR_SUPPORTED || uiRef.current !== 'idle') return;
+    setError('');
+    const SR  = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+
+    rec.onstart  = () => { setUiState('listening'); setStatusText('LISTENING...'); setTranscript(''); };
+    rec.onresult = (e) => {
+      const tx = Array.from(e.results).map(r => r[0].transcript).join('');
+      setTranscript(tx);
+      if (e.results[e.results.length - 1].isFinal) {
+        rec.stop(); setTranscript(''); setUiState('idle'); sendRef.current(tx);
+      }
+    };
+    rec.onerror = (e) => {
+      setUiState('idle'); setTranscript('');
+      if (e.error === 'not-allowed') setError('Microphone denied — allow in browser settings.');
+      else if (e.error !== 'no-speech') setError(`Voice error: ${e.error}`);
+      setStatusText('READY');
+    };
+    rec.onend = () => { if (uiRef.current === 'listening') { setUiState('idle'); setStatusText('READY'); } };
+
+    recRef.current = rec;
+    try { rec.start(); } catch (e) { setError('Mic error: ' + e.message); }
+  }, []);
+
+  // ── Wake word ─────────────────────────────────────────────────────────────
+  const stopWake = useCallback(() => {
+    if (wakeRecRef.current) { try { wakeRecRef.current.abort(); } catch {} wakeRecRef.current = null; }
+    setWakeArmed(false);
+  }, []);
+
+  const startWake = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || !wakeEnRef.current || wakeRecRef.current || meetRef.current) return;
+
+    const rec = new SR();
+    rec.lang = 'en-GB'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 3;
+
+    rec.onstart  = () => { setWakeArmed(true); };
+    rec.onresult = (e) => {
+      const latest = e.results[e.results.length - 1];
+      if (uiRef.current !== 'idle') return;
+      for (let i = 0; i < latest.length; i++) {
+        if (WAKE_RE.test(latest[i].transcript)) {
+          setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
+          stopWake();
+          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 200);
+          return;
+        }
+      }
+    };
+    rec.onerror = (e) => {
+      wakeRecRef.current = null; setWakeArmed(false);
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') return;
+      if (wakeEnRef.current) setTimeout(() => { if (wakeEnRef.current) startWake(); }, 1000);
+    };
+    rec.onend = () => {
+      wakeRecRef.current = null; setWakeArmed(false);
+      if (wakeEnRef.current && uiRef.current === 'idle' && !meetRef.current) {
+        setTimeout(() => { if (wakeEnRef.current) startWake(); }, 400);
+      }
+    };
+
+    wakeRecRef.current = rec;
+    try { rec.start(); } catch (e) { wakeRecRef.current = null; setWakeArmed(false); }
+  }, [stopWake, startListening]);
+
+  // Re-arm after query completes
+  useEffect(() => {
+    if (uiState === 'idle' && wakeEnabled && !wakeArmed && !wakeRecRef.current && !meetingMode) {
+      const t = setTimeout(() => startWake(), 600);
+      return () => clearTimeout(t);
+    }
+    if (uiState !== 'idle' && uiState !== 'agents' && wakeArmed) stopWake();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiState, wakeEnabled, meetingMode]);
+
+  // Toggle — called inside click handler (satisfies browser user-gesture requirement)
+  const toggleWake = useCallback(() => {
+    const next = !wakeEnabled;
+    setWakeEnabled(next); wakeEnRef.current = next;
+    if (next) { startWake(); setStatusText('HEY SOLIS — ARMED'); }
+    else      { stopWake();  setStatusText('WAKE WORD OFF'); setTimeout(() => setStatusText('READY'), 2000); }
+  }, [wakeEnabled, startWake, stopWake]);
+
+  // ── Meeting mode ──────────────────────────────────────────────────────────
+  const toggleMeeting = useCallback(() => {
+    const next = !meetingMode;
+    setMeetingMode(next); meetRef.current = next;
+    if (next) { stopWake(); setStatusText('MEETING MODE ACTIVE'); }
+    else      { setStatusText('MEETING MODE OFF'); setTimeout(() => setStatusText('READY'), 2000); }
+  }, [meetingMode, stopWake]);
+
+  // ── File handling ─────────────────────────────────────────────────────────
+  const handleFiles = useCallback(async (files) => {
+    setError('');
+    const next = [];
+    for (const f of Array.from(files)) {
+      if (f.size > 20 * 1024 * 1024) { setError(`${f.name} exceeds 20 MB.`); continue; }
+      const mt      = f.type || 'application/octet-stream';
+      const isImage = mt.startsWith('image/');
+      const isPDF   = mt === 'application/pdf';
+      const isText  = mt.startsWith('text/') || mt === 'application/json' || /\.(csv|json|txt)$/i.test(f.name);
+      try {
+        const data    = isText ? null : await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+        const content = isText ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(f); }) : null;
+        next.push({ id: Date.now() + Math.random(), name: f.name, mediaType: mt, data, content, isImage, isPDF, isText });
+      } catch { setError(`Could not read ${f.name}.`); }
+    }
+    setAttachments(prev => [...prev, ...next]);
+  }, []);
+
+  // ── What am I missing ─────────────────────────────────────────────────────
+  const handleMissing = useCallback(() => {
+    const stage  = lifecycleStage.replace(/-/g, ' ');
+    const prompt = currentProject
+      ? `Project "${currentProject.name}" is at ${stage} stage. What am I missing? Check comprehensively: contract details, notices, programme, RAMS, payment evidence, variations, reports, photos, outstanding actions, compliance, risks and overdue obligations. Prioritise by urgency.`
+      : `I am at ${stage} stage. What am I missing? Give me a thorough checklist of what needs to be in place, obligations due, risks present, and immediate priority actions.`;
+    sendRef.current(prompt);
+  }, [currentProject, lifecycleStage]);
+
+  // ── Voice output toggle ───────────────────────────────────────────────────
+  const toggleVoiceOut = useCallback(() => {
+    setVoiceOut(v => { voiceOutRef.current = !v; return !v; });
+    synthRef.current.cancel();
+    if (uiState === 'speaking') setUiState('idle');
+  }, [uiState]);
+
+  const micActive   = uiState === 'listening';
+  const micDisabled = uiState !== 'idle' && uiState !== 'listening';
+
+  return (
+    <div className={`app${meetingMode ? ' app--meet' : ''}`}>
+      <Header
+        uiState={uiState}
+        project={currentProject}
+        time={time}
+        statusText={statusText}
+        meetingMode={meetingMode}
+        wakeArmed={wakeArmed}
+      />
+
+      <div className="body">
+        <div className="grid">
+
+          <ChatPanel
+            messages={messages}
+            input={input}
+            setInput={setInput}
+            onSend={sendMessage}
+            transcript={transcript}
+            attachments={attachments}
+            onAttach={() => fileInputRef.current?.click()}
+            onVoice={() => micActive ? stopListening() : startListening()}
+            micActive={micActive}
+            micDisabled={micDisabled}
+            uiState={uiState}
+            meetingMode={meetingMode}
+            chatEndRef={chatEndRef}
+            inputRef={inputRef}
+            fileInputRef={fileInputRef}
+            onFileChange={handleFiles}
+            onRemoveAttachment={id => setAttachments(p => p.filter(a => a.id !== id))}
+            speechSupported={SR_SUPPORTED}
+            error={error}
+          />
+
+          <div className="brain-col">
+            <BrainCanvas
+              state={uiState}
+              meetingMode={meetingMode}
+              wakeArmed={wakeArmed}
+              wakeFlash={wakeFlash}
+              agentCount={activeAgents.filter(a => a.status === 'running').length}
+            />
+            <div className="brain-lbl">SOLIS · CONSTRUCTION INTELLIGENCE</div>
+          </div>
+
+          <ControlPanel
+            uiState={uiState}
+            activeAgents={activeAgents}
+            lifecycleStage={lifecycleStage}
+            setLifecycleStage={setLifecycleStage}
+            meetingMode={meetingMode}
+            toggleMeeting={toggleMeeting}
+            wakeEnabled={wakeEnabled}
+            toggleWake={toggleWake}
+            wakeArmed={wakeArmed}
+            voiceOut={voiceOut}
+            setVoiceOut={toggleVoiceOut}
+            onWhatAmIMissing={handleMissing}
+            statusText={statusText}
+            speechSupported={SR_SUPPORTED}
+          />
+
+        </div>
+      </div>
+    </div>
+  );
+}
