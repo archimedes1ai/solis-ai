@@ -253,23 +253,12 @@ export default function App() {
       for (let i = 0; i < latest.length; i++) {
         if (WAKE_RE.test(latest[i].transcript)) {
           console.log('[SOLIS wake] WAKE WORD MATCHED:', latest[i].transcript);
+          const acks = ['How can I help sir', 'Good morning sir', 'Yes sir', 'Listening sir', 'How can I assist sir'];
+          speak(acks[Math.floor(Math.random() * acks.length)]);
           setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
           stopWake();
-          // 400 ms lets abort() fully settle and its onend fire before we claim the mic
-          setTimeout(() => {
-            synthRef.current.cancel();
-            const acks = ['Yes sir', 'Listening sir', 'How can I help sir', 'Ready sir'];
-            const utt = new SpeechSynthesisUtterance(acks[Math.floor(Math.random() * acks.length)]);
-            const vs = voicesRef.current;
-            const pref = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
-                       || vs.find(v => v.lang === 'en-GB')
-                       || vs.find(v => v.lang.startsWith('en'));
-            if (pref) utt.voice = pref;
-            utt.rate = 0.92; utt.pitch = 0.88;
-            synthRef.current.speak(utt);
-            // 600 ms after speech starts, open the command mic
-            setTimeout(() => { setWakeListening(true); startListening(); }, 600);
-          }, 400);
+          // 1000 ms lets speech complete and abort() settle before we claim the mic
+          setTimeout(() => { setWakeListening(true); startListening(); }, 1000);
           return;
         }
       }
