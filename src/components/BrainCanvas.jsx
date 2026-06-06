@@ -149,13 +149,13 @@ export default function BrainCanvas({
       // --- Neurons ---
       neurons.forEach(n => {
         const pulse = 0.5 + 0.5 * Math.sin(n.phase);
-        const r = n.size * (0.85 + pulse * 0.35);
+        const r = n.size * (0.85 + pulse * 0.35) * 0.6;
         const alpha = n.opacity * (0.55 + pulse * 0.45);
 
         // halo
         const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4.5);
-        halo.addColorStop(0, `hsla(${n.hue},100%,70%,${alpha * 0.28})`);
-        halo.addColorStop(1, `hsla(${n.hue},100%,70%,0)`);
+        halo.addColorStop(0, `hsla(${n.hue},100%,58%,${alpha * 0.28})`);
+        halo.addColorStop(1, `hsla(${n.hue},100%,58%,0)`);
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 4.5, 0, Math.PI * 2);
         ctx.fillStyle = halo;
@@ -164,7 +164,7 @@ export default function BrainCanvas({
         // core dot
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${n.hue},100%,78%,${alpha})`;
+        ctx.fillStyle = `hsla(${n.hue},100%,62%,${alpha})`;
         ctx.fill();
       });
 
