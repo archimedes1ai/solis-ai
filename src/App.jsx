@@ -239,6 +239,7 @@ export default function App() {
 
     rec.onstart = () => {
       console.log('[SOLIS wake] Armed — listening for "Hey SOLIS"');
+      console.log("WAKE: recogniser started");
       setWakeArmed(true);
     };
 
@@ -251,6 +252,7 @@ export default function App() {
       if (uiRef.current !== 'idle') return;
 
       for (let i = 0; i < latest.length; i++) {
+        console.log("WAKE HEARD:", latest[i].transcript);
         if (WAKE_RE.test(latest[i].transcript)) {
           console.log('[SOLIS wake] WAKE WORD MATCHED:', latest[i].transcript);
           const acks = ['How can I help sir', 'Good morning sir', 'Yes sir', 'Listening sir', 'How can I assist sir'];
@@ -266,6 +268,7 @@ export default function App() {
 
     rec.onerror = (e) => {
       console.log('[SOLIS wake] Error:', e.error);
+      console.log("WAKE ERROR:", e.error);
       wakeRecRef.current = null; setWakeArmed(false);
       // not-allowed means mic permission denied — don't retry, it won't help
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
