@@ -32,7 +32,7 @@ export default function Header({ uiState, project, time, statusText, meetingMode
 
       <div className="hdr__right">
         <div className="hdr__clock">
-          <div className="hdr__time">{fmtT(time)}</div>
+          <div className="hdr__time" style={{ fontVariantNumeric: 'tabular-nums', minWidth: '7ch' }}>{fmtT(time)}</div>
           <div className="hdr__date">{fmtD(time)}</div>
         </div>
         <div className="hdr__dot" title="Connected" />
