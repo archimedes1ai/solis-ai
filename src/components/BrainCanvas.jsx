@@ -1,191 +1,315 @@
-import { useEffect, useRef, useMemo } from 'react';
-import { STATE_COLOURS } from '../utils/constants.js';
+import { useEffect, useRef } from "react";
 
-function inBrain(x, y, cx, cy, rx, ry) {
-  const dx = (x - cx) / (rx * 0.9);
-  const dy = (y - cy) / (ry * 0.82);
-  return dx * dx + (dy > 0 ? dy * 1.12 : dy) * (dy > 0 ? dy * 1.12 : dy) < 1;
-}
-
-function makeNodes(n, W, H) {
-  const cx = W / 2, cy = H / 2, rx = W * 0.39, ry = H * 0.35;
-  const nodes = [];
-  let tries = 0;
-  while (nodes.length < n && tries++ < 6000) {
-    const x = cx + (Math.random() * 2 - 1) * rx * 1.1;
-    const y = cy + (Math.random() * 2 - 1) * ry * 1.1;
-    if (inBrain(x, y, cx, cy, rx, ry)) {
-      nodes.push({ x, y, r: 1.4 + Math.random() * 2, phase: Math.random() * Math.PI * 2, spd: 0.018 + Math.random() * 0.04, bri: 0.4 + Math.random() * 0.6 });
-    }
-  }
-  return nodes;
-}
-
-function makeEdges(nodes, maxD) {
-  const edges = [];
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const dx = nodes[i].x - nodes[j].x, dy = nodes[i].y - nodes[j].y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < maxD) edges.push({ i, j, d, str: 1 - d / maxD });
-    }
-  }
-  return edges;
-}
-
-export default function BrainCanvas({ state, meetingMode, wakeArmed, wakeFlash, agentCount }) {
-  const canvasRef  = useRef(null);
-  const frameRef   = useRef(null);
-  const stateRef   = useRef(state);
-  const meetRef    = useRef(meetingMode);
-  const flashRef   = useRef(wakeFlash);
-  const agentsRef  = useRef(agentCount);
-
-  useEffect(() => { stateRef.current = meetingMode ? 'meeting' : state; }, [state, meetingMode]);
-  useEffect(() => { meetRef.current  = meetingMode; },                    [meetingMode]);
-  useEffect(() => { flashRef.current = wakeFlash; },                      [wakeFlash]);
-  useEffect(() => { agentsRef.current = agentCount; },                    [agentCount]);
-
-  const geo = useMemo(() => {
-    const W = 500, H = 500;
-    const nodes = makeNodes(70, W, H);
-    const edges = makeEdges(nodes, 76);
-    return { nodes, edges, W, H, cx: W / 2, cy: H / 2 };
-  }, []);
+export default function BrainCanvas({
+  isThinking = false,
+  wakeArmed = false,
+  wakeFlash = false,
+  agentCount = 25,
+}) {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const { nodes, edges, W, H, cx, cy } = geo;
-    const pulses = [];
-    let tick = 0;
+    const ctx = canvas.getContext("2d");
 
-    function spawnPulse() {
-      if (!edges.length) return;
-      const e = edges[Math.floor(Math.random() * edges.length)];
-      pulses.push({ e, t: 0, spd: 0.007 + Math.random() * 0.013, rev: Math.random() > .5, w: 1.5 + Math.random() * 2, a: 0.55 + Math.random() * 0.45 });
+    const W = canvas.width;
+    const H = canvas.height;
+    const CX = W / 2;
+    const CY = H / 2;
+    const RX = 210;
+    const RY = 175;
+
+    // --- Grid offscreen canvas ---
+    const gridCanvas = document.createElement("canvas");
+    gridCanvas.width = W;
+    gridCanvas.height = H;
+    const gctx = gridCanvas.getContext("2d");
+    gctx.strokeStyle = "#071e2e";
+    gctx.lineWidth = 0.4;
+    const GRID = 28;
+    for (let x = 0; x <= W; x += GRID) {
+      gctx.beginPath(); gctx.moveTo(x, 0); gctx.lineTo(x, H); gctx.stroke();
+    }
+    for (let y = 0; y <= H; y += GRID) {
+      gctx.beginPath(); gctx.moveTo(0, y); gctx.lineTo(W, y); gctx.stroke();
     }
 
-    function frame() {
-      tick++;
-      const st   = stateRef.current || 'idle';
-      const cols = STATE_COLOURS[st] || STATE_COLOURS.idle;
-      const col  = cols.primary, glow = cols.glow, ring = cols.ring;
+    // --- Brain zone test ---
+    function inBrain(x, y) {
+      const dx = x - CX, dy = y - CY;
+      const ry = dy < 0 ? RY * 0.88 : RY * 1.05;
+      const rx = RX * (1 - Math.abs(dy) / (RY * 2.8));
+      return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) < 1;
+    }
 
-      ctx.clearRect(0, 0, W, H);
+    function brainDensity(x, y) {
+      const dx = x - CX, dy = y - CY;
+      const ry = dy < 0 ? RY * 0.88 : RY * 1.05;
+      const rx = RX * (1 - Math.abs(dy) / (RY * 2.8));
+      const d = Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+      return Math.max(0, 1 - d);
+    }
 
-      // Background halo
-      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, W * .5);
-      bg.addColorStop(0, glow); bg.addColorStop(1, 'transparent');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    // --- Create neurons ---
+    const COUNT = 52;
+    const neurons = [];
+    for (let i = 0; i < COUNT; i++) {
+      let x, y, attempts = 0;
+      do {
+        x = CX + (Math.random() - 0.5) * RX * 2.1;
+        y = CY + (Math.random() - 0.5) * RY * 2.1;
+        attempts++;
+      } while (!inBrain(x, y) && attempts < 200);
 
-      // HUD rings
-      [
-        { r: W * .494, spd:  0.0028, dl: 8,  dg: 14, lw: .75, a: .3  },
-        { r: W * .428, spd: -0.0048, dl: 3,  dg: 6,  lw: .55, a: .22 },
-        { r: W * .358, spd:  0.0088, dl: 16, dg: 22, lw: 1.0, a: .42 },
-      ].forEach(({ r, spd, dl, dg, lw, a }) => {
-        ctx.save();
-        ctx.translate(cx, cy); ctx.rotate(tick * spd);
-        ctx.strokeStyle = ring; ctx.globalAlpha = a; ctx.lineWidth = lw; ctx.setLineDash([dl, dg]);
-        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
-        ctx.setLineDash([]); ctx.restore();
+      const density = brainDensity(x, y);
+      const size = 1.2 + density * 2.8 + Math.random() * 1.0;
+
+      neurons.push({
+        x, y,
+        baseX: x, baseY: y,
+        vx: (Math.random() - 0.5) * 0.15,
+        vy: (Math.random() - 0.5) * 0.15,
+        wx: Math.random() * Math.PI * 2,
+        wy: Math.random() * Math.PI * 2,
+        wxSpeed: 0.004 + Math.random() * 0.006,
+        wySpeed: 0.003 + Math.random() * 0.005,
+        wAmp: 14 + Math.random() * 22,
+        size,
+        phase: Math.random() * Math.PI * 2,
+        pulseSpeed: 0.022 + Math.random() * 0.018,
+        opacity: 0.45 + density * 0.45 + Math.random() * 0.1,
+        hue: 185 + Math.random() * 25,
+      });
+    }
+
+    // --- HUD ring state ---
+    let ringAngle = 0;
+    // --- Flicker state ---
+    let flickerVal = 0.65;
+    let flickerT = 0;
+
+    function drawFrame(t) {
+      ctx.fillStyle = "#030e1c";
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(gridCanvas, 0, 0);
+
+      ringAngle = t * 0.0003;
+      flickerT += 0.025;
+      flickerVal = 0.55 + 0.15 * Math.sin(flickerT) * Math.sin(flickerT * 0.7);
+
+      // --- Update neurons ---
+      neurons.forEach(n => {
+        n.wx += n.wxSpeed;
+        n.wy += n.wySpeed;
+        n.x = n.baseX + Math.sin(n.wx) * n.wAmp;
+        n.y = n.baseY + Math.cos(n.wy) * n.wAmp * 0.7;
+        n.baseX += n.vx * 0.1;
+        n.baseY += n.vy * 0.1;
+        if (!inBrain(n.x, n.y)) {
+          n.baseX += (CX - n.baseX) * 0.003;
+          n.baseY += (CY - n.baseY) * 0.003;
+        }
+        n.vx *= 0.995;
+        n.vy *= 0.995;
+        n.vx += (Math.random() - 0.5) * 0.025;
+        n.vy += (Math.random() - 0.5) * 0.025;
+        n.phase += n.pulseSpeed;
       });
 
-      // Corner brackets
-      const bs = 16, bo = W * .478;
-      ctx.globalAlpha = .38; ctx.strokeStyle = col; ctx.lineWidth = 1.1;
-      [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx, sy]) => {
-        const bx = cx + sx * bo, by = cy + sy * bo;
-        ctx.beginPath(); ctx.moveTo(bx, by + sy * bs); ctx.lineTo(bx, by); ctx.lineTo(bx - sx * bs, by); ctx.stroke();
-      });
-      ctx.globalAlpha = 1;
+      // --- Connections ---
+      for (let i = 0; i < neurons.length; i++) {
+        for (let j = i + 1; j < neurons.length; j++) {
+          const a = neurons[i], b = neurons[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 72) {
+            const alpha = (1 - dist / 72) * 0.22;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.strokeStyle = `rgba(0,180,220,${alpha})`;
+            ctx.lineWidth = 0.6;
+            ctx.stroke();
+          }
+        }
+      }
 
-      // Brain outline
-      const rx = W * .39, ry = H * .35;
-      ctx.save(); ctx.globalAlpha = .16; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+      // --- Nebula glow ---
+      const nebulaGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, 95);
+      const nebulaAlpha = 0.06 + 0.04 * Math.sin(t * 0.001);
+      nebulaGrad.addColorStop(0, `rgba(0,180,220,${nebulaAlpha})`);
+      nebulaGrad.addColorStop(1, "rgba(0,180,220,0)");
       ctx.beginPath();
-      ctx.moveTo(cx, cy - ry * .86);
-      ctx.bezierCurveTo(cx - rx * .28, cy - ry * 1.08, cx - rx * 1.02, cy - ry * .72, cx - rx * 1.01, cy - ry * .04);
-      ctx.bezierCurveTo(cx - rx * .99, cy + ry * .58, cx - rx * .52, cy + ry * .84, cx - rx * .08, cy + ry * .87);
-      ctx.bezierCurveTo(cx + rx * .08, cy + ry * .94, cx + rx * .08, cy + ry * .94, cx + rx * .08, cy + ry * .87);
-      ctx.bezierCurveTo(cx + rx * .52, cy + ry * .84, cx + rx * .99, cy + ry * .58, cx + rx * 1.01, cy - ry * .04);
-      ctx.bezierCurveTo(cx + rx * 1.02, cy - ry * .72, cx + rx * .28, cy - ry * 1.08, cx, cy - ry * .86);
-      ctx.closePath(); ctx.stroke();
-      ctx.globalAlpha = .07; ctx.setLineDash([3, 4]);
-      ctx.beginPath(); ctx.moveTo(cx, cy - ry * .8); ctx.bezierCurveTo(cx - 14, cy - ry * .28, cx + 14, cy + ry * .28, cx, cy + ry * .8); ctx.stroke();
-      ctx.setLineDash([]); ctx.restore();
+      ctx.arc(CX, CY, 95, 0, Math.PI * 2);
+      ctx.fillStyle = nebulaGrad;
+      ctx.fill();
 
-      // Edges
-      edges.forEach(({ i, j, str }) => {
-        ctx.globalAlpha = str * .11; ctx.strokeStyle = col; ctx.lineWidth = str * .7;
-        ctx.beginPath(); ctx.moveTo(nodes[i].x, nodes[i].y); ctx.lineTo(nodes[j].x, nodes[j].y); ctx.stroke();
+      // --- Neurons ---
+      neurons.forEach(n => {
+        const pulse = 0.5 + 0.5 * Math.sin(n.phase);
+        const r = n.size * (0.85 + pulse * 0.35);
+        const alpha = n.opacity * (0.55 + pulse * 0.45);
+
+        // halo
+        const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4.5);
+        halo.addColorStop(0, `hsla(${n.hue},100%,70%,${alpha * 0.28})`);
+        halo.addColorStop(1, `hsla(${n.hue},100%,70%,0)`);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r * 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = halo;
+        ctx.fill();
+
+        // core dot
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${n.hue},100%,78%,${alpha})`;
+        ctx.fill();
+      });
+
+      // --- Central core ---
+      const cPulse = 0.5 + 0.5 * Math.sin(t * 0.04);
+      const cR = 4.5 + cPulse * 2;
+      const cHalo = ctx.createRadialGradient(CX, CY, 0, CX, CY, 32);
+      cHalo.addColorStop(0, `rgba(0,238,255,${0.28 + cPulse * 0.18})`);
+      cHalo.addColorStop(1, "rgba(0,238,255,0)");
+      ctx.beginPath();
+      ctx.arc(CX, CY, 32, 0, Math.PI * 2);
+      ctx.fillStyle = cHalo;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(CX, CY, cR, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(0,238,255,${0.88 + cPulse * 0.12})`;
+      ctx.fill();
+
+      // --- HUD rings ---
+      const rings = [
+        { r: 205, dash: [3, 9], speed: 0.08, color: "#0b3d55", lw: 0.5 },
+        { r: 162, dash: [55, 18, 8, 18], speed: -0.12, color: "#0d5070", lw: 0.8 },
+        { r: 132, dash: [7, 7], speed: 0.18, color: "#156080", lw: 0.5 },
+      ];
+      rings.forEach(ring => {
+        ctx.save();
+        ctx.translate(CX, CY);
+        ctx.rotate(ringAngle * ring.speed * 10);
+        ctx.beginPath();
+        ctx.arc(0, 0, ring.r, 0, Math.PI * 2);
+        ctx.setLineDash(ring.dash);
+        ctx.strokeStyle = ring.color;
+        ctx.lineWidth = ring.lw;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      });
+
+      // Wake word armed ring
+      if (wakeArmed) {
+        const wa = 0.4 + 0.3 * Math.sin(t * 0.005);
+        ctx.beginPath();
+        ctx.arc(CX, CY, 215, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0,255,120,${wa})`;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      // Wake flash overlay
+      if (wakeFlash) {
+        ctx.fillStyle = "rgba(0,238,255,0.08)";
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // Thinking pulse
+      if (isThinking) {
+        const tp = 0.5 + 0.5 * Math.sin(t * 0.006);
+        const tHalo = ctx.createRadialGradient(CX, CY, 0, CX, CY, 120);
+        tHalo.addColorStop(0, `rgba(0,180,255,${tp * 0.12})`);
+        tHalo.addColorStop(1, "rgba(0,180,255,0)");
+        ctx.beginPath();
+        ctx.arc(CX, CY, 120, 0, Math.PI * 2);
+        ctx.fillStyle = tHalo;
+        ctx.fill();
+      }
+
+      // --- Corner brackets ---
+      const bSize = 22, bInset = 28;
+      ctx.strokeStyle = "#1a6a8a";
+      ctx.lineWidth = 1.2;
+      [
+        [bInset, bInset, 1, 1],
+        [W - bInset, bInset, -1, 1],
+        [bInset, H - bInset, 1, -1],
+        [W - bInset, H - bInset, -1, -1],
+      ].forEach(([x, y, sx, sy]) => {
+        ctx.beginPath();
+        ctx.moveTo(x + sx * bSize, y);
+        ctx.lineTo(x, y);
+        ctx.lineTo(x, y + sy * bSize);
+        ctx.stroke();
+      });
+
+      // --- Degree markers ---
+      ctx.fillStyle = "#0e5a7a";
+      ctx.font = "8px monospace";
+      ctx.textAlign = "center";
+      ctx.globalAlpha = 0.5;
+      ctx.fillText("000°", CX, CY - 168);
+      ctx.fillText("180°", CX, CY + 180);
+      ctx.textAlign = "right";
+      ctx.fillText("270°", CX - 172, CY + 3);
+      ctx.textAlign = "left";
+      ctx.fillText("090°", CX + 175, CY + 3);
+      // tick marks
+      ctx.strokeStyle = "#1a7090";
+      ctx.lineWidth = 1;
+      [[CX, CY - 158, CX, CY - 148],
+       [CX, CY + 158, CX, CY + 168],
+       [CX - 158, CY, CX - 148, CY],
+       [CX + 148, CY, CX + 158, CY]].forEach(([x1,y1,x2,y2]) => {
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
       });
       ctx.globalAlpha = 1;
 
-      // Spawn pulses
-      const rate = st === 'agents' ? 3 : st === 'thinking' ? 2 : 1;
-      if (tick % Math.max(1, 9 - rate) === 0 && pulses.length < 28) spawnPulse();
-
-      // Draw pulses
-      for (let k = pulses.length - 1; k >= 0; k--) {
-        const p = pulses[k];
-        p.t += p.spd;
-        if (p.t >= 1) { pulses.splice(k, 1); continue; }
-        const { i, j } = p.e;
-        const n1 = nodes[p.rev ? j : i], n2 = nodes[p.rev ? i : j];
-        const px = n1.x + (n2.x - n1.x) * p.t, py = n1.y + (n2.y - n1.y) * p.t;
-        const pg = ctx.createRadialGradient(px, py, 0, px, py, p.w * 3.5);
-        pg.addColorStop(0, col); pg.addColorStop(1, 'transparent');
-        ctx.globalAlpha = p.a * (1 - Math.abs(p.t - .5) * 1.6);
-        ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, p.w * 3.5, 0, Math.PI * 2); ctx.fill();
-      }
+      // --- HUD text ---
+      ctx.font = "9px monospace";
+      ctx.fillStyle = "#1a8aaa";
+      ctx.globalAlpha = flickerVal;
+      ctx.textAlign = "left";
+      ctx.fillText("SYS: ONLINE", bInset + 8, bInset + 28);
+      ctx.fillText(`AGENTS: ${agentCount}`, bInset + 8, bInset + 40);
+      ctx.fillText("MODE: ACTIVE", bInset + 8, bInset + 52);
+      ctx.textAlign = "right";
+      ctx.fillText("NRN: 847ms", W - bInset - 8, bInset + 28);
+      ctx.fillText("SIG: 99.2%", W - bInset - 8, bInset + 40);
+      ctx.fillText("PWR: FULL", W - bInset - 8, bInset + 52);
       ctx.globalAlpha = 1;
 
-      // Nodes
-      nodes.forEach(n => {
-        const pulse = Math.sin(tick * n.spd + n.phase);
-        const r = n.r + pulse * .75;
-        const ng = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4.5);
-        ng.addColorStop(0, col); ng.addColorStop(1, 'transparent');
-        ctx.globalAlpha = n.bri * (.45 + pulse * .28);
-        ctx.fillStyle = ng; ctx.beginPath(); ctx.arc(n.x, n.y, r * 4.5, 0, Math.PI * 2); ctx.fill();
-        ctx.globalAlpha = n.bri; ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(n.x, n.y, r * .65, 0, Math.PI * 2); ctx.fill();
-      });
+      // --- Bottom label ---
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = "#1a8aaa";
+      ctx.font = "9px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("SOLIS  ·  CONSTRUCTION INTELLIGENCE", CX, H - bInset - 10);
+      const lblW = 62;
+      ctx.strokeStyle = "#1a8aaa";
+      ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(CX - lblW - 90, H - bInset - 14); ctx.lineTo(CX - lblW - 28, H - bInset - 14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(CX + lblW + 28, H - bInset - 14); ctx.lineTo(CX + lblW + 90, H - bInset - 14); ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // Centre reticle
-      const rr = 21, rot = tick * .011;
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot);
-      ctx.strokeStyle = col; ctx.globalAlpha = .5; ctx.lineWidth = .8;
-      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
-      for (let q = 0; q < 4; q++) {
-        const a = (q / 4) * Math.PI * 2;
-        ctx.beginPath(); ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); ctx.lineTo(Math.cos(a) * (rr + 7), Math.sin(a) * (rr + 7)); ctx.stroke();
-      }
-      ctx.restore();
-
-      // Wake flash
-      if (flashRef.current) { ctx.globalAlpha = .22; ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
-
-      // Agent count label
-      const ac = agentsRef.current;
-      if (ac > 0) {
-        ctx.font = `700 9px "Orbitron", monospace`;
-        ctx.fillStyle = col; ctx.globalAlpha = .65; ctx.textAlign = 'center';
-        ctx.fillText(`${ac} AGENT${ac > 1 ? 'S' : ''} ACTIVE`, cx, H - 16);
-        ctx.textAlign = 'start'; ctx.globalAlpha = 1;
-      }
-
-      frameRef.current = requestAnimationFrame(frame);
+      animRef.current = requestAnimationFrame(drawFrame);
     }
 
-    frameRef.current = requestAnimationFrame(frame);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geo]);
+    animRef.current = requestAnimationFrame(drawFrame);
+    return () => cancelAnimationFrame(animRef.current);
+  }, [isThinking, wakeArmed, wakeFlash, agentCount]);
 
-  return <canvas ref={canvasRef} width={500} height={500} className="brain-canvas" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      width={500}
+      height={500}
+      style={{ width: "100%", height: "100%", display: "block" }}
+    />
+  );
 }
