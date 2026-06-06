@@ -156,10 +156,45 @@ input, textarea { font-family: inherit; }
 }
 .grid {
   display: grid;
-  grid-template-columns: 1fr 510px 288px;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
   height: 100%;
 }
+.grid--chat-collapsed {
+  grid-template-columns: 0px 1fr 1fr;
+}
+
+/* ── Chat wrap (collapse shell) ──────────────────────────────────────────── */
+.chat-wrap {
+  position: relative;
+  overflow: visible;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.grid--chat-collapsed .chat-wrap .chat { display: none; }
+.chat-toggle {
+  position: absolute;
+  right: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 20px;
+  height: 44px;
+  padding: 0;
+  border-radius: 0 4px 4px 0;
+  background: rgba(8,20,36,.95);
+  border: 1px solid #1a6a8a;
+  border-left: none;
+  color: #1a8aaa;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--ease), color var(--ease);
+}
+.chat-toggle:hover { background: rgba(0,212,255,.1); color: var(--cyan); }
 
 /* ── Chat panel ───────────────────────────────────────────────────────────── */
 .chat {
@@ -453,9 +488,6 @@ input, textarea { font-family: inherit; }
 .ctrl__agent-chip-name { font-size: 7.5px; }
 
 /* ── Mobile ────────────────────────────────────────────────────────────────── */
-@media (max-width: 1080px) {
-  .grid { grid-template-columns: 1fr 460px 270px; }
-}
 @media (max-width: 860px) {
   body { overflow-y: auto; }
   .app { height: auto; min-height: 100vh; overflow: visible; }
@@ -466,6 +498,7 @@ input, textarea { font-family: inherit; }
   .chat { min-height: 55vh; }
   .ctrl { max-height: 60vh; }
   .hdr__tag, .hdr__project { display: none; }
+  .chat-toggle { display: none; }
 }
 @media (max-width: 480px) {
   .hdr { padding: 0 12px; }

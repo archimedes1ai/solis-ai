@@ -29,6 +29,7 @@ export default function App() {
   const [wakeEnabled,    setWakeEnabled]    = useState(false);
   const [wakeArmed,      setWakeArmed]      = useState(false);
   const [wakeFlash,      setWakeFlash]      = useState(false);
+  const [chatCollapsed,  setChatCollapsed]  = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const inputRef      = useRef(null);
@@ -496,29 +497,38 @@ export default function App() {
       />
 
       <div className="body">
-        <div className="grid">
+        <div className={`grid${chatCollapsed ? ' grid--chat-collapsed' : ''}`}>
 
-          <ChatPanel
-            messages={messages}
-            input={input}
-            setInput={setInput}
-            onSend={sendMessage}
-            transcript={transcript}
-            attachments={attachments}
-            onAttach={() => fileInputRef.current?.click()}
-            onVoice={() => micActive ? stopListening() : startListening()}
-            micActive={micActive}
-            micDisabled={micDisabled}
-            uiState={uiState}
-            meetingMode={meetingMode}
-            chatEndRef={chatEndRef}
-            inputRef={inputRef}
-            fileInputRef={fileInputRef}
-            onFileChange={handleFiles}
-            onRemoveAttachment={id => setAttachments(p => p.filter(a => a.id !== id))}
-            speechSupported={SR_SUPPORTED}
-            error={error}
-          />
+          <div className="chat-wrap">
+            <ChatPanel
+              messages={messages}
+              input={input}
+              setInput={setInput}
+              onSend={sendMessage}
+              transcript={transcript}
+              attachments={attachments}
+              onAttach={() => fileInputRef.current?.click()}
+              onVoice={() => micActive ? stopListening() : startListening()}
+              micActive={micActive}
+              micDisabled={micDisabled}
+              uiState={uiState}
+              meetingMode={meetingMode}
+              chatEndRef={chatEndRef}
+              inputRef={inputRef}
+              fileInputRef={fileInputRef}
+              onFileChange={handleFiles}
+              onRemoveAttachment={id => setAttachments(p => p.filter(a => a.id !== id))}
+              speechSupported={SR_SUPPORTED}
+              error={error}
+            />
+            <button
+              className="chat-toggle"
+              onClick={() => setChatCollapsed(c => !c)}
+              title={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+            >
+              {chatCollapsed ? '›' : '‹'}
+            </button>
+          </div>
 
           <div className="brain-col">
             <BrainCanvas
