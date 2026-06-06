@@ -161,7 +161,7 @@ input, textarea { font-family: inherit; }
   height: 100%;
 }
 .grid--chat-collapsed {
-  grid-template-columns: 0px 1fr 1fr;
+  grid-template-columns: 0fr 1fr 1fr;
 }
 
 /* ── Chat wrap (collapse shell) ──────────────────────────────────────────── */
@@ -489,7 +489,7 @@ input, textarea { font-family: inherit; }
 .ctrl__agent-chip-name { font-size: 7.5px; }
 
 /* ── Mobile ────────────────────────────────────────────────────────────────── */
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   body { overflow-y: auto; }
   .app { height: auto; min-height: 100vh; overflow: visible; }
   .body { overflow: visible; padding: 10px; }
