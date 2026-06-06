@@ -29,6 +29,7 @@ export default function App() {
   const [wakeEnabled,    setWakeEnabled]    = useState(false);
   const [wakeArmed,      setWakeArmed]      = useState(false);
   const [wakeFlash,      setWakeFlash]      = useState(false);
+  const [wakeListening,  setWakeListening]  = useState(false);
   const [chatCollapsed,  setChatCollapsed]  = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────────────
@@ -255,7 +256,20 @@ export default function App() {
           setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
           stopWake();
           // 400 ms lets abort() fully settle and its onend fire before we claim the mic
-          setTimeout(() => { synthRef.current.cancel(); startListening(); }, 400);
+          setTimeout(() => {
+            synthRef.current.cancel();
+            const acks = ['Yes sir', 'Listening sir', 'How can I help sir', 'Ready sir'];
+            const utt = new SpeechSynthesisUtterance(acks[Math.floor(Math.random() * acks.length)]);
+            const vs = voicesRef.current;
+            const pref = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
+                       || vs.find(v => v.lang === 'en-GB')
+                       || vs.find(v => v.lang.startsWith('en'));
+            if (pref) utt.voice = pref;
+            utt.rate = 0.92; utt.pitch = 0.88;
+            synthRef.current.speak(utt);
+            // 600 ms after speech starts, open the command mic
+            setTimeout(() => { setWakeListening(true); startListening(); }, 600);
+          }, 400);
           return;
         }
       }
@@ -312,6 +326,9 @@ export default function App() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uiState, wakeEnabled, meetingMode]);
+
+  // Clear wake-listening indicator whenever we leave the listening state
+  useEffect(() => { if (uiState !== 'listening') setWakeListening(false); }, [uiState]);
 
   // Toggle — onClick fires synchronously within a user gesture, satisfying the browser's
   // requirement that the first SpeechRecognition.start() call comes from user interaction.
@@ -538,6 +555,7 @@ export default function App() {
               wakeFlash={wakeFlash}
               agentCount={activeAgents.filter(a => a.status === 'running').length}
             />
+            {wakeListening && <div className="brain-wake-listen">LISTENING...</div>}
             <div className="brain-lbl">SOLIS · CONSTRUCTION INTELLIGENCE</div>
           </div>
 
