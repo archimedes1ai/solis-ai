@@ -81,8 +81,8 @@ export default function App() {
   }, [messages, transcript]);
 
   // ── TTS speak ─────────────────────────────────────────────────────────────
-  const speak = useCallback((text) => {
-    if (!voiceOutRef.current || !text) return;
+  const speak = useCallback((text, onEnd) => {
+    if (!voiceOutRef.current || !text) { if (onEnd) setTimeout(onEnd, 50); return; }
     synthRef.current.cancel();
     const clean = text
       .replace(/```[\s\S]*?```/g, '')           // fenced code blocks → remove
@@ -109,8 +109,8 @@ export default function App() {
     if (pref) utt.voice = pref;
     utt.rate = 0.92; utt.pitch = 0.88;
     utt.onstart = () => { setUiState('speaking'); setStatusText('SPEAKING'); };
-    utt.onend   = () => { setUiState('idle');     setStatusText('READY'); };
-    utt.onerror = () => { setUiState('idle');     setStatusText('READY'); };
+    utt.onend   = () => { setUiState('idle'); setStatusText('READY'); if (onEnd) setTimeout(onEnd, 50); };
+    utt.onerror = () => { setUiState('idle'); setStatusText('READY'); if (onEnd) setTimeout(onEnd, 50); };
     synthRef.current.speak(utt);
   }, []);
 
@@ -289,11 +289,15 @@ export default function App() {
         if (WAKE_RE.test(latest[i].transcript)) {
           console.log('[SOLIS wake] WAKE WORD MATCHED:', latest[i].transcript);
           const acks = ['How can I help sir', 'Good morning sir', 'Yes sir', 'Listening sir', 'How can I assist sir'];
-          speak(acks[Math.floor(Math.random() * acks.length)]);
           setWakeFlash(true); setTimeout(() => setWakeFlash(false), 900);
           stopWake();
-          // 1000 ms lets speech complete and abort() settle before we claim the mic
-          setTimeout(() => { setWakeListening(true); startListening(); }, 1000);
+          // Open command mic exactly when ack speech ends — not after a fixed guess.
+          // speak()'s onEnd callback fires 50 ms after uiState resets to 'idle', so
+          // startListening()'s uiRef guard sees 'idle' and the mic reliably opens.
+          speak(acks[Math.floor(Math.random() * acks.length)], () => {
+            setWakeListening(true);
+            startListening();
+          });
           return;
         }
       }
