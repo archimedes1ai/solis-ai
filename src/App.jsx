@@ -84,7 +84,23 @@ export default function App() {
   const speak = useCallback((text) => {
     if (!voiceOutRef.current || !text) return;
     synthRef.current.cancel();
-    const clean = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/^[⚠️•●▸►#]+\s*/gm, '').slice(0, 900);
+    const clean = text
+      .replace(/```[\s\S]*?```/g, '')           // fenced code blocks → remove
+      .replace(/---+/g, '. ')                    // horizontal rules → pause
+      .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')    // bold+italic → text
+      .replace(/\*\*([^*]+)\*\*/g, '$1')        // bold → text
+      .replace(/\*([^*\n]+)\*/g, '$1')          // italic → text
+      .replace(/__([^_]+)__/g, '$1')            // bold underscore → text
+      .replace(/_([^_\n]+)_/g, '$1')            // italic underscore → text
+      .replace(/^#{1,6}\s+/gm, '')              // headers → plain text
+      .replace(/`([^`]+)`/g, '$1')              // inline code → text only
+      .replace(/\|/g, ' ')                       // table pipes → space
+      .replace(/^>\s*/gm, '')                   // blockquotes → text
+      .replace(/^[-*]\s+/gm, '. ')             // list bullets → pause
+      .replace(/^[⚠️•●▸►]+\s*/gm, '')         // emoji/symbol bullets → remove
+      .replace(/[ \t]{2,}/g, ' ')               // collapse multiple spaces
+      .trim()
+      .slice(0, 900);
     const utt   = new SpeechSynthesisUtterance(clean);
     const vs    = voicesRef.current;
     const pref  = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
