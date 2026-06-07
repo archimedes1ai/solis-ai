@@ -9,7 +9,7 @@ import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // Matches "hey solis", "hi solis", "ok solis", bare "solis", etc.
-const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis)\b/i;
+const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis|solace|hey\s+solace|morning\s+solace|afternoon\s+solace|evening\s+solace|good\s+morning\s+solace)\b/i;
 
 export default function App() {
   // ── State ─────────────────────────────────────────────────────────────────
