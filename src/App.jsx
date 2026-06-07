@@ -227,11 +227,16 @@ export default function App() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR)                    { console.log('[SOLIS wake] SpeechRecognition not supported'); return; }
     if (!wakeEnRef.current)     { console.log('[SOLIS wake] skipped — wake disabled');         return; }
-    if (wakeRecRef.current)     { console.log('[SOLIS wake] skipped — already running');        return; }
     if (meetRef.current)        { console.log('[SOLIS wake] skipped — meeting mode');           return; }
     if (listeningRef.current)   { console.log('[SOLIS wake] skipped — mic in use (listeningRef)'); return; }
     // Belt-and-suspenders: also check uiState for speaking/thinking
     if (uiRef.current !== 'idle') { console.log('[SOLIS wake] skipped — uiState:', uiRef.current); return; }
+
+    if (wakeRecRef.current) {
+      console.log('[SOLIS wake] Aborting stale recogniser before restart');
+      try { wakeRecRef.current.abort(); } catch (_) {}
+      wakeRecRef.current = null;
+    }
 
     console.log('[SOLIS wake] Creating recogniser…');
     const rec = new SR();
@@ -297,11 +302,11 @@ export default function App() {
     };
 
     wakeRecRef.current = rec;
-    console.log('[SOLIS wake] Calling rec.start()…');
+    console.log("WAKE: calling start now");
     try {
       rec.start();
     } catch (err) {
-      console.log('[SOLIS wake] rec.start() threw:', err.message);
+      console.log("WAKE START ERROR:", err);
       wakeRecRef.current = null; setWakeArmed(false);
     }
   }, [stopWake, startListening]);
