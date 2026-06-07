@@ -224,6 +224,7 @@ export default function App() {
   }, []);
 
   const startWake = useCallback(() => {
+    console.log("startWake CALLED, uiState =", uiRef.current);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR)                    { console.log('[SOLIS wake] SpeechRecognition not supported'); return; }
     if (!wakeEnRef.current)     { console.log('[SOLIS wake] skipped — wake disabled');         return; }
