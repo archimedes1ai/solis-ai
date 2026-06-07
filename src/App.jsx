@@ -5,6 +5,7 @@ import BrainCanvas  from './components/BrainCanvas.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
 import { callSolis } from './utils/apiClient.js';
 import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
+import { detectResearchMode, getResearchPrompt } from './utils/researchAgent.js';
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -148,7 +149,10 @@ export default function App() {
         ? `\nACTIVE AGENTS: ${dispatched.map(a => a.name).join(', ')}\nApply these agents' expertise in your response.`
         : '';
 
-      const reply = await callSolis({ messages: history, system: ctx + agentCtx, maxTokens: 2500 });
+      const researchMode = detectResearchMode(text);
+      const researchCtx  = researchMode ? getResearchPrompt(researchMode, text) : '';
+
+      const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
       setMessages(prev => [...prev, {
         role: 'assistant', content: reply,
