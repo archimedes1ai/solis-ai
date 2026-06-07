@@ -331,6 +331,7 @@ export default function App() {
   // Toggle — onClick fires synchronously within a user gesture, satisfying the browser's
   // requirement that the first SpeechRecognition.start() call comes from user interaction.
   const toggleWake = useCallback(() => {
+    console.log("toggleWake fired");
     const next = !wakeEnabled;
     console.log('[SOLIS wake] toggleWake — next:', next);
     setWakeEnabled(next); wakeEnRef.current = next;
