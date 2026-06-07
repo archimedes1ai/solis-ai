@@ -5,7 +5,7 @@ import BrainCanvas  from './components/BrainCanvas.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
 import { callSolis } from './utils/apiClient.js';
 import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
-import { detectResearchMode, getResearchPrompt } from './utils/researchAgent.js';
+import { detectResearchMode, getResearchPrompt, detectDocumentMode } from './utils/researchAgent.js';
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -32,6 +32,7 @@ export default function App() {
   const [wakeFlash,      setWakeFlash]      = useState(false);
   const [wakeListening,  setWakeListening]  = useState(false);
   const [chatCollapsed,  setChatCollapsed]  = useState(false);
+  const [activityMode,   setActivityMode]   = useState('idle');
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const inputRef      = useRef(null);
@@ -152,6 +153,10 @@ export default function App() {
       const researchMode = detectResearchMode(text);
       const researchCtx  = researchMode ? getResearchPrompt(researchMode, text) : '';
 
+      if (researchMode)             setActivityMode('research');
+      else if (detectDocumentMode(text)) setActivityMode('document');
+      else                          setActivityMode('thinking');
+
       const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
       setMessages(prev => [...prev, {
@@ -160,6 +165,7 @@ export default function App() {
       }]);
       setActiveAgents(prev => prev.map(a => ({ ...a, status: 'done' })));
       setTimeout(() => setActiveAgents([]), 4000);
+      setActivityMode('idle');
       setUiState('idle');
       setStatusText('READY');
       speak(reply);
@@ -167,6 +173,7 @@ export default function App() {
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${e.message}`, ts: Date.now(), isError: true }]);
       setActiveAgents([]);
+      setActivityMode('idle');
       setUiState('idle');
       setStatusText('ERROR');
       setError(e.message);
@@ -557,6 +564,7 @@ export default function App() {
               wakeArmed={wakeArmed}
               wakeFlash={wakeFlash}
               agentCount={activeAgents.filter(a => a.status === 'running').length}
+              activityMode={activityMode}
             />
             {wakeListening && <div className="brain-wake-listen">LISTENING...</div>}
             <div className="brain-lbl">SOLIS · CONSTRUCTION INTELLIGENCE</div>

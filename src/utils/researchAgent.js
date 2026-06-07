@@ -66,6 +66,12 @@ DELIVERY STYLE:
 - End with a recommendation on which 2–3 opportunities represent the best fit and why.
 - If no live opportunities are found for the specific criteria, suggest adjacent opportunities or advise where to monitor for upcoming work.`;
 
+const DOCUMENT_RE = /\b(draft|generate|write|create|produce|prepare)\b.{0,40}\b(report|document|letter|notice|certificate|schedule|specification|agenda|minutes|brief|claim|variation|subcontract|contract)\b/i;
+
+export function detectDocumentMode(text) {
+  return DOCUMENT_RE.test(text);
+}
+
 export function detectResearchMode(text) {
   if (DUE_DILIGENCE_RE.test(text)) return 'due-diligence';
   if (OPPORTUNITY_RE.test(text))    return 'opportunity';

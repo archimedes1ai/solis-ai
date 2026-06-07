@@ -5,9 +5,13 @@ export default function BrainCanvas({
   wakeArmed = false,
   wakeFlash = false,
   agentCount = 25,
+  activityMode = 'idle',  // 'idle' | 'thinking' | 'research' | 'document'
 }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
+  // Ref keeps activityMode current inside the animation loop without restarting the effect
+  const activityModeRef = useRef(activityMode);
+  useEffect(() => { activityModeRef.current = activityMode; }, [activityMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,7 +84,7 @@ export default function BrainCanvas({
         phase: Math.random() * Math.PI * 2,
         pulseSpeed: 0.022 + Math.random() * 0.018,
         opacity: 0.45 + density * 0.45 + Math.random() * 0.1,
-        hue: 185 + Math.random() * 25,
+        hue: 185 + Math.random() * 25,  // base hue; shifted at render time by mode offset
       });
     }
 
@@ -90,7 +94,33 @@ export default function BrainCanvas({
     let flickerVal = 0.65;
     let flickerT = 0;
 
+    // --- Activity mode colour/speed state (lerped toward target each frame) ---
+    // Neutral idle hue centre = 197.5 (midpoint of neuron base range 185–210)
+    const IDLE_HUE = 197.5;
+    let currentHueCenter = IDLE_HUE;
+    let currentSpeedMult = 1.0;
+    let currentConnDist  = 72;
+
+    // Mode targets: hueCenter shifts all neuron hues, speedMult scales pulse rate,
+    // connDist controls connection draw distance (lower = more lines for research)
+    function getModeTargets(mode) {
+      switch (mode) {
+        case 'thinking': return { hueCenter: 217.5, speedMult: 1.3,  connDist: 72 };
+        case 'research': return { hueCenter: 142.5, speedMult: 1.5,  connDist: 65 };
+        case 'document': return { hueCenter: 47.5,  speedMult: 0.85, connDist: 72 };
+        default:         return { hueCenter: IDLE_HUE, speedMult: 1.0, connDist: 72 };
+      }
+    }
+
     function drawFrame(t) {
+      // --- Lerp colour/speed toward current mode targets (~0.8 s at 60 fps) ---
+      const tgt = getModeTargets(activityModeRef.current);
+      const L = 0.06;
+      currentHueCenter += (tgt.hueCenter - currentHueCenter) * L;
+      currentSpeedMult += (tgt.speedMult  - currentSpeedMult)  * L;
+      currentConnDist  += (tgt.connDist   - currentConnDist)   * L;
+      const hueShift = currentHueCenter - IDLE_HUE;
+
       ctx.fillStyle = "#030e1c";
       ctx.fillRect(0, 0, W, H);
       ctx.drawImage(gridCanvas, 0, 0);
@@ -115,7 +145,7 @@ export default function BrainCanvas({
         n.vy *= 0.995;
         n.vx += (Math.random() - 0.5) * 0.025;
         n.vy += (Math.random() - 0.5) * 0.025;
-        n.phase += n.pulseSpeed;
+        n.phase += n.pulseSpeed * currentSpeedMult;
       });
 
       // --- Connections ---
@@ -124,12 +154,12 @@ export default function BrainCanvas({
           const a = neurons[i], b = neurons[j];
           const dx = a.x - b.x, dy = a.y - b.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 72) {
-            const alpha = (1 - dist / 72) * 0.22;
+          if (dist < currentConnDist) {
+            const alpha = (1 - dist / currentConnDist) * 0.22;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
-            ctx.strokeStyle = `rgba(0,180,220,${alpha})`;
+            ctx.strokeStyle = `hsla(${currentHueCenter},100%,55%,${alpha})`;
             ctx.lineWidth = 0.6;
             ctx.stroke();
           }
@@ -139,8 +169,8 @@ export default function BrainCanvas({
       // --- Nebula glow ---
       const nebulaGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, 95);
       const nebulaAlpha = 0.06 + 0.04 * Math.sin(t * 0.001);
-      nebulaGrad.addColorStop(0, `rgba(0,180,220,${nebulaAlpha})`);
-      nebulaGrad.addColorStop(1, "rgba(0,180,220,0)");
+      nebulaGrad.addColorStop(0, `hsla(${currentHueCenter},100%,50%,${nebulaAlpha})`);
+      nebulaGrad.addColorStop(1, `hsla(${currentHueCenter},100%,50%,0)`);
       ctx.beginPath();
       ctx.arc(CX, CY, 95, 0, Math.PI * 2);
       ctx.fillStyle = nebulaGrad;
@@ -151,11 +181,12 @@ export default function BrainCanvas({
         const pulse = 0.5 + 0.5 * Math.sin(n.phase);
         const r = n.size * (0.85 + pulse * 0.35) * 0.6;
         const alpha = n.opacity * (0.55 + pulse * 0.45);
+        const h = n.hue + hueShift;
 
         // halo
         const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4.5);
-        halo.addColorStop(0, `hsla(${n.hue},100%,58%,${alpha * 0.28})`);
-        halo.addColorStop(1, `hsla(${n.hue},100%,58%,0)`);
+        halo.addColorStop(0, `hsla(${h},100%,58%,${alpha * 0.28})`);
+        halo.addColorStop(1, `hsla(${h},100%,58%,0)`);
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 4.5, 0, Math.PI * 2);
         ctx.fillStyle = halo;
@@ -164,7 +195,7 @@ export default function BrainCanvas({
         // core dot
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${n.hue},100%,62%,${alpha})`;
+        ctx.fillStyle = `hsla(${h},100%,62%,${alpha})`;
         ctx.fill();
       });
 
@@ -172,18 +203,18 @@ export default function BrainCanvas({
       const cPulse = 0.5 + 0.5 * Math.sin(t * 0.04);
       const cR = 4.5 + cPulse * 2;
       const cHalo = ctx.createRadialGradient(CX, CY, 0, CX, CY, 32);
-      cHalo.addColorStop(0, `rgba(0,238,255,${0.28 + cPulse * 0.18})`);
-      cHalo.addColorStop(1, "rgba(0,238,255,0)");
+      cHalo.addColorStop(0, `hsla(${currentHueCenter},100%,65%,${0.28 + cPulse * 0.18})`);
+      cHalo.addColorStop(1, `hsla(${currentHueCenter},100%,65%,0)`);
       ctx.beginPath();
       ctx.arc(CX, CY, 32, 0, Math.PI * 2);
       ctx.fillStyle = cHalo;
       ctx.fill();
       ctx.beginPath();
       ctx.arc(CX, CY, cR, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(0,238,255,${0.88 + cPulse * 0.12})`;
+      ctx.fillStyle = `hsla(${currentHueCenter},100%,80%,${0.88 + cPulse * 0.12})`;
       ctx.fill();
 
-      // --- HUD rings ---
+      // --- HUD rings (stay fixed cyan regardless of activity mode) ---
       const rings = [
         { r: 205, dash: [3, 9], speed: 0.08, color: "#0b3d55", lw: 0.5 },
         { r: 162, dash: [55, 18, 8, 18], speed: -0.12, color: "#0d5070", lw: 0.8 },
@@ -302,6 +333,7 @@ export default function BrainCanvas({
 
     animRef.current = requestAnimationFrame(drawFrame);
     return () => cancelAnimationFrame(animRef.current);
+  // activityMode intentionally excluded — handled via activityModeRef to avoid animation restart
   }, [isThinking, wakeArmed, wakeFlash, agentCount]);
 
   return (
