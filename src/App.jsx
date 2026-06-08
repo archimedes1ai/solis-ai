@@ -128,10 +128,14 @@ export default function App() {
 
     const content = [];
     for (const a of atts) {
-      if ((a.isImage || a.isPDF) && a.data) {
+      if (a.isPDF && a.data) {
+        content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data } });
+      } else if (a.isImage && a.data) {
         content.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } });
       } else if (a.content) {
         content.push({ type: 'text', text: `[Attached: ${a.name}]\n${a.content.slice(0, 8000)}` });
+      } else {
+        setError(`"${a.name}" could not be read — please export to PDF or CSV and re-attach.`);
       }
     }
     if (text) content.push({ type: 'text', text });
