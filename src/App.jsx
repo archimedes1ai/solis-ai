@@ -522,6 +522,9 @@ export default function App() {
     sendRef.current(prompt);
   }, [currentProject, lifecycleStage]);
 
+  // ── Clear chat ────────────────────────────────────────────────────────────
+  const onClearChat = useCallback(() => setMessages([]), []);
+
   // ── Voice output toggle ───────────────────────────────────────────────────
   const toggleVoiceOut = useCallback(() => {
     setVoiceOut(v => { voiceOutRef.current = !v; return !v; });
@@ -567,6 +570,7 @@ export default function App() {
               onRemoveAttachment={id => setAttachments(p => p.filter(a => a.id !== id))}
               speechSupported={SR_SUPPORTED}
               error={error}
+              onClearChat={onClearChat}
             />
             <button
               className="chat-toggle"

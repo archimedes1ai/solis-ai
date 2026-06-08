@@ -8,7 +8,7 @@ export default function ChatPanel({
   transcript, attachments, onAttach, onVoice,
   micActive, micDisabled, uiState, meetingMode,
   chatEndRef, inputRef, fileInputRef, onFileChange,
-  onRemoveAttachment, speechSupported, error,
+  onRemoveAttachment, speechSupported, error, onClearChat,
 }) {
   const busy         = uiState === 'thinking' || uiState === 'uploading';
   const agentsBusy   = uiState === 'agents';
@@ -125,6 +125,16 @@ export default function ChatPanel({
             title={micActive ? 'Stop' : 'Voice input'}
           >
             {micActive ? '⏹' : '🎙'}
+          </button>
+        )}
+
+        {messages.length > 0 && (
+          <button
+            className="chat__clear"
+            onClick={() => { if (window.confirm('Clear conversation?')) onClearChat(); }}
+            title="Clear chat"
+          >
+            🗑
           </button>
         )}
 

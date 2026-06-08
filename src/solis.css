@@ -306,6 +306,14 @@ input, textarea { font-family: inherit; }
 .chat__voice--on    { color: var(--green); animation: glow 1s ease-in-out infinite; }
 .chat__voice:disabled { opacity: .28; cursor: not-allowed; }
 
+.chat__clear {
+  padding: 0 12px; font-size: 15px; height: 48px; display: flex; align-items: center;
+  border-left: 1px solid var(--border); border-top: none; border-bottom: none; border-right: none;
+  background: none; color: var(--cyan-20); flex-shrink: 0;
+  transition: color var(--ease);
+}
+.chat__clear:hover { color: var(--red); }
+
 .chat__send {
   padding: 0 16px; height: 48px; min-width: 52px; flex-shrink: 0;
   background: none; border-top: none; border-bottom: none; border-right: none;
