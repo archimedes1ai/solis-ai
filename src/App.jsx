@@ -139,6 +139,7 @@ export default function App() {
       }
     }
     if (text) content.push({ type: 'text', text });
+    if (content.length === 0) return;
 
     const msgContent  = content.length === 1 && content[0].type === 'text' ? text : content;
     const displayText = text || atts.map(a => a.name).join(', ');
@@ -196,7 +197,7 @@ export default function App() {
       setActivityMode('idle');
       setUiState('idle');
       setStatusText('ERROR');
-      setError(e.message);
+      setError(e instanceof Error ? e.message : (typeof e === 'string' ? e : 'An unexpected error occurred.'));
     }
   }, [input, attachments, lifecycleStage, currentProject, speak]);
 
