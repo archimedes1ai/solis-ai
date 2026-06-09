@@ -143,7 +143,7 @@ export default function App() {
     console.log('[SOLIS] content array:', JSON.stringify(content));
     if (content.length === 0) return;
 
-    const msgContent  = content.length === 1 && content[0].type === 'text' ? text : content;
+    const msgContent  = atts.length === 0 && content.length === 1 && content[0].type === 'text' ? text : content;
     console.log('[SOLIS] msgContent:', typeof msgContent === 'string' ? `string(${msgContent.length}): "${msgContent.slice(0, 80)}"` : `array(${msgContent.length}): ${JSON.stringify(msgContent).slice(0, 400)}`);
     const displayText = text || atts.map(a => a.name).join(', ');
     const userMsg     = { role: 'user', content: msgContent, displayText, attachments: atts, ts: Date.now() };
