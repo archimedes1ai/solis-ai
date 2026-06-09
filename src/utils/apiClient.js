@@ -61,12 +61,18 @@ export async function callSolis({ messages, system = '', maxTokens = 2500 }) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+    const bodyText = await res.text().catch(() => '');
+    console.error('[SOLIS] API error — status:', res.status, res.statusText, '— body:', bodyText);
+    let err = {};
+    try { err = JSON.parse(bodyText); } catch {}
     throw new Error(err.error || `Server error ${res.status}`);
   }
 
   const data = await res.json();
-  if (data.error) throw new Error(data.error);
+  if (data.error) {
+    console.error('[SOLIS] API ok but data.error:', data.error);
+    throw new Error(data.error);
+  }
 
   // When web search is used the content array contains a mix of types:
   //   text       — the model's prose (what we show the user)

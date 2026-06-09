@@ -192,6 +192,7 @@ export default function App() {
       speak(reply);
 
     } catch (e) {
+      console.error('[SOLIS] sendMessage raw error:', e);
       setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${e.message}`, ts: Date.now(), isError: true }]);
       setActiveAgents([]);
       setActivityMode('idle');
