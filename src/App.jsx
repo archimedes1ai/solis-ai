@@ -139,12 +139,9 @@ export default function App() {
       }
     }
     if (text) content.push({ type: 'text', text });
-    console.log('[SOLIS] atts:', atts.map(a => ({ name: a.name, isText: a.isText, hasContent: a.content != null, contentLen: a.content?.length ?? 0 })));
-    console.log('[SOLIS] content array:', JSON.stringify(content));
     if (content.length === 0) return;
 
     const msgContent  = atts.length === 0 && content.length === 1 && content[0].type === 'text' ? text : content;
-    console.log('[SOLIS] msgContent:', typeof msgContent === 'string' ? `string(${msgContent.length}): "${msgContent.slice(0, 80)}"` : `array(${msgContent.length}): ${JSON.stringify(msgContent).slice(0, 400)}`);
     const displayText = text || atts.map(a => a.name).join(', ');
     const userMsg     = { role: 'user', content: msgContent, displayText, attachments: atts, ts: Date.now() };
 
@@ -181,7 +178,6 @@ export default function App() {
       else if (detectDocumentMode(text)) setActivityMode('document');
       else                          setActivityMode('thinking');
 
-      console.log('[SOLIS] history last msg content:', JSON.stringify(history[history.length - 1].content).slice(0, 500));
       const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
       setMessages(prev => [...prev, {
@@ -196,7 +192,6 @@ export default function App() {
       speak(reply);
 
     } catch (e) {
-      console.error('[SOLIS] sendMessage raw error:', e);
       setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${e.message}`, ts: Date.now(), isError: true }]);
       setActiveAgents([]);
       setActivityMode('idle');
@@ -509,7 +504,7 @@ export default function App() {
     setError('');
     const next = [];
     for (const f of Array.from(files)) {
-      if (f.size > 20 * 1024 * 1024) { setError(`${f.name} exceeds 20 MB.`); continue; }
+      if (f.size > 3 * 1024 * 1024) { setError(`${f.name} exceeds 3 MB — please reduce the file size and re-attach.`); continue; }
       const mt      = f.type || 'application/octet-stream';
       const isImage = mt.startsWith('image/');
       const isPDF   = mt === 'application/pdf';
