@@ -22,7 +22,7 @@
   --purple:        #bf80ff;
   --orange:        #ff6b35;
   --white:         #e8f4f8;
-  --muted:         rgba(0, 212, 255, 0.38);
+  --muted:         rgba(0, 212, 255, 0.62);
   --font-hud:      'Orbitron', monospace;
   --font-mono:     'Share Tech Mono', monospace;
   --header-h:      60px;
@@ -233,7 +233,7 @@ input, textarea { font-family: inherit; }
 }
 .chat__empty-sun  { font-size: 44px; opacity: .25; filter: drop-shadow(0 0 10px var(--cyan)); }
 .chat__empty-name { font-family: var(--font-hud); font-size: 13px; letter-spacing: 4px; color: var(--cyan); opacity: .6; }
-.chat__empty-info { font-size: 8.5px; letter-spacing: 1.5px; line-height: 2.2; opacity: .42; }
+.chat__empty-info { font-size: 8.5px; letter-spacing: 1.5px; line-height: 2.2; opacity: .7; }
 
 .chat__error {
   padding: 7px 12px;
@@ -479,7 +479,7 @@ input, textarea { font-family: inherit; }
 .ctrl__stage {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 7px; border: 1px solid transparent; border-radius: 3px;
-  color: rgba(0,212,255,.3); font-size: 8.5px; letter-spacing: .3px;
+  color: rgba(0,212,255,.55); font-size: 8.5px; letter-spacing: .3px;
   background: none; text-align: left; width: 100%;
   transition: all var(--ease);
 }
@@ -494,7 +494,7 @@ input, textarea { font-family: inherit; }
 .ctrl__agent-chip {
   display: flex; align-items: center; gap: 3px;
   padding: 2px 6px; border: 1px solid rgba(0,212,255,.07); border-radius: 3px;
-  font-size: 7.5px; color: rgba(0,212,255,.35);
+  font-size: 7.5px; color: rgba(0,212,255,.6);
   transition: all var(--ease);
 }
 .ctrl__agent-chip:hover { border-color: var(--border); background: var(--cyan-08); }
