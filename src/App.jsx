@@ -174,9 +174,9 @@ export default function App() {
       const researchMode = detectResearchMode(text);
       const researchCtx  = researchMode ? getResearchPrompt(researchMode, text) : '';
 
-      if (researchMode)             setActivityMode('research');
-      else if (detectDocumentMode(text)) setActivityMode('document');
-      else                          setActivityMode('thinking');
+      if (researchMode)                                     setActivityMode('research');
+      else if (atts.length > 0 || detectDocumentMode(text)) setActivityMode('document');
+      else                                                  setActivityMode('thinking');
 
       const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
