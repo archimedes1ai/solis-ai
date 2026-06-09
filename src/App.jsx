@@ -139,9 +139,12 @@ export default function App() {
       }
     }
     if (text) content.push({ type: 'text', text });
+    console.log('[SOLIS] atts:', atts.map(a => ({ name: a.name, isText: a.isText, hasContent: a.content != null, contentLen: a.content?.length ?? 0 })));
+    console.log('[SOLIS] content array:', JSON.stringify(content));
     if (content.length === 0) return;
 
     const msgContent  = content.length === 1 && content[0].type === 'text' ? text : content;
+    console.log('[SOLIS] msgContent:', typeof msgContent === 'string' ? `string(${msgContent.length}): "${msgContent.slice(0, 80)}"` : `array(${msgContent.length}): ${JSON.stringify(msgContent).slice(0, 400)}`);
     const displayText = text || atts.map(a => a.name).join(', ');
     const userMsg     = { role: 'user', content: msgContent, displayText, attachments: atts, ts: Date.now() };
 
@@ -178,6 +181,7 @@ export default function App() {
       else if (detectDocumentMode(text)) setActivityMode('document');
       else                          setActivityMode('thinking');
 
+      console.log('[SOLIS] history last msg content:', JSON.stringify(history[history.length - 1].content).slice(0, 500));
       const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
       setMessages(prev => [...prev, {

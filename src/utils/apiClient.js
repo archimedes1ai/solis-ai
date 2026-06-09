@@ -54,6 +54,7 @@ RESPONSE STYLE:
 export async function callSolis({ messages, system = '', maxTokens = 2500 }) {
   const fullSystem = system ? `${SYSTEM}\n\n${system}` : SYSTEM;
 
+  console.log('[SOLIS] callSolis posting — last msg content:', JSON.stringify(messages[messages.length - 1]?.content).slice(0, 500));
   const res = await fetch('/api/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
