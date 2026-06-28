@@ -6,6 +6,7 @@ import ControlPanel from './components/ControlPanel.jsx';
 import { callSolis } from './utils/apiClient.js';
 import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
 import { detectResearchMode, getResearchPrompt, detectDocumentMode } from './utils/researchAgent.js';
+import { AGENTS } from './utils/constants.js';
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -592,7 +593,7 @@ export default function App() {
               meetingMode={meetingMode}
               wakeArmed={wakeArmed}
               wakeFlash={wakeFlash}
-              agentCount={activeAgents.filter(a => a.status === 'running').length}
+              agentCount={AGENTS.length}
               activityMode={activityMode}
             />
             {wakeListening && <div className="brain-wake-listen">LISTENING...</div>}
