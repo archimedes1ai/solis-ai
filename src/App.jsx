@@ -7,6 +7,11 @@ import { callSolis } from './utils/apiClient.js';
 import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
 import { detectResearchMode, getResearchPrompt, detectDocumentMode } from './utils/researchAgent.js';
 import { AGENTS } from './utils/constants.js';
+import { runHarness } from './core/harness.js';
+
+// Harness orchestration layer — off by default. When false the send path is
+// byte-for-byte the original single callSolis call.
+const USE_HARNESS = false;
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -179,7 +184,9 @@ export default function App() {
       else if (atts.length > 0 || detectDocumentMode(text)) setActivityMode('document');
       else                                                  setActivityMode('thinking');
 
-      const reply = await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
+      const reply = USE_HARNESS
+        ? await runHarness({ history, system: ctx + agentCtx + researchCtx, ctx, maxTokens: researchMode ? 4096 : 2500, callSolis })
+        : await callSolis({ messages: history, system: ctx + agentCtx + researchCtx, maxTokens: researchMode ? 4096 : 2500 });
 
       setMessages(prev => [...prev, {
         role: 'assistant', content: reply,
