@@ -11,7 +11,7 @@ import { runHarness } from './core/harness.js';
 
 // Harness orchestration layer — off by default. When false the send path is
 // byte-for-byte the original single callSolis call.
-const USE_HARNESS = false;
+const USE_HARNESS = true;
 
 const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
