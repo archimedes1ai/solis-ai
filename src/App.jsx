@@ -18,6 +18,75 @@ const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // Matches "hey solis", "hi solis", "ok solis", bare "solis", etc.
 const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis|solace|hey\s+solace|morning\s+solace|afternoon\s+solace|evening\s+solace|good\s+morning\s+solace)\b/i;
 
+// Chrome/Edge silently truncate any single utterance at ~15 s, so long answers
+// are spoken as a queue of short chunks. ~140 chars at rate 0.92 lands well
+// inside that window with margin for slower voices.
+const SPEECH_CHUNK_LIMIT = 140;
+
+// Normalise model output for speech: markdown markers, symbols and URLs are
+// removed or spoken as words. Order matters — fenced code and links must go
+// before the inline marker rules, or their contents leak through.
+function cleanForSpeech(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')                 // fenced code blocks → drop
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')           // images → drop
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')         // links → link text, never the URL
+    .replace(/https?:\/\/\S+/g, 'link')              // bare URLs → the word "link"
+    .replace(/<[^>]+>/g, ' ')                        // stray html/xml tags → drop
+    .replace(/^\s*[-*_]{3,}\s*$/gm, '. ')            // horizontal rules → pause
+    .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')           // bold+italic → text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')               // bold → text
+    .replace(/\*([^*\n]+)\*/g, '$1')                 // italic → text
+    .replace(/__([^_]+)__/g, '$1')                   // bold underscore → text
+    .replace(/_([^_\n]+)_/g, '$1')                   // italic underscore → text
+    .replace(/`([^`]+)`/g, '$1')                     // inline code → text
+    .replace(/^#{1,6}\s*/gm, '')                     // headers → plain text
+    .replace(/#(?!\d)/g, ' ')                        // stray hashes → drop (keeps "#12")
+    .replace(/^>\s*/gm, '')                          // blockquotes → text
+    .replace(/^\s*[-*+•●▸►]\s+/gm, '. ')             // list bullets → pause
+    .replace(/\|/g, ' ')                             // table pipes → space
+    .replace(/[•●▸►]/g, ' ')                         // mid-line bullets → space
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, ' ')  // emoji/pictographs incl. warning sign → drop
+    .replace(/[\uFE00-\uFE0F]/g, '')                 // orphaned emoji variation selectors removed
+    .replace(/£\s?([\d,.]+)/g, '$1 pounds')          // £12,500 → 12,500 pounds
+    .replace(/\$\s?([\d,.]+)/g, '$1 dollars')
+    .replace(/€\s?([\d,.]+)/g, '$1 euros')
+    .replace(/£/g, ' pounds ').replace(/\$/g, ' dollars ').replace(/€/g, ' euros ')
+    .replace(/([\d.]+)\s?%/g, '$1 percent')          // 15% → 15 percent
+    .replace(/&/g, ' and ')                          // H&S → H and S
+    .replace(/\s+\/\s+/g, ', ')                      // "COMMERCIAL / LEGAL" → pause (the draft banner)
+    .replace(/\/(?=[A-Za-z])/g, ', ')                // Low/Medium/High → "Low, Medium, High"; dates untouched
+    .replace(/\s*[—–]\s*/g, ', ')                    // em/en dash → pause
+    .replace(/\s+-\s+/g, ', ')                       // spaced hyphen → pause (keeps "pre-construction")
+    .replace(/\n{2,}/g, '. ')                        // paragraph break → pause
+    .replace(/\n/g, ' ')                             // remaining newlines → space
+    .replace(/[ \t]{2,}/g, ' ')                      // collapse runs of spaces
+    .replace(/,\s*\./g, '.')                         // ", ." → "."
+    .replace(/(\.\s*){2,}/g, '. ')                   // ".. ." → ". "
+    .trim();
+}
+
+// Split cleaned text into utterance-sized chunks on sentence boundaries,
+// falling back to a hard character split for any single oversized sentence.
+function chunkForSpeech(text, limit = SPEECH_CHUNK_LIMIT) {
+  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
+  const chunks = [];
+  let buf = '';
+  for (const sentence of sentences) {
+    const parts = sentence.length > limit
+      // Prefer breaking at whitespace; fall back to a hard cut so a long
+      // unbroken run (no spaces) is still split rather than silently dropped.
+      ? (sentence.match(new RegExp(`[\\s\\S]{1,${limit}}(?=\\s|$)|[\\s\\S]{1,${limit}}`, 'g')) || [sentence])
+      : [sentence];
+    for (const part of parts) {
+      if (buf && (buf + part).length > limit) { chunks.push(buf.trim()); buf = ''; }
+      buf += part;
+    }
+  }
+  if (buf.trim()) chunks.push(buf.trim());
+  return chunks.filter(Boolean);
+}
+
 export default function App() {
   // ── State ─────────────────────────────────────────────────────────────────
   const [messages,       setMessages]       = useState([]);
@@ -49,6 +118,10 @@ export default function App() {
   const meetRecRef    = useRef(null);
   const synthRef      = useRef(window.speechSynthesis);
   const voicesRef     = useRef([]);
+  // Generation counter — bumped on every speak() call. A queued chunk chain
+  // checks it and aborts if a newer run has superseded it, so a cancelled or
+  // restarted utterance can never resume mid-queue.
+  const speechRunRef  = useRef(0);
   // Synchronous flag — set true the moment ANY listening starts, before React flushes state.
   // Guards startWake() so it never steals the mic while voice input is active.
   const listeningRef  = useRef(false);
@@ -90,34 +163,39 @@ export default function App() {
   const speak = useCallback((text, onEnd) => {
     if (!voiceOutRef.current || !text) { if (onEnd) setTimeout(onEnd, 50); return; }
     synthRef.current.cancel();
-    const clean = text
-      .replace(/```[\s\S]*?```/g, '')           // fenced code blocks → remove
-      .replace(/---+/g, '. ')                    // horizontal rules → pause
-      .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')    // bold+italic → text
-      .replace(/\*\*([^*]+)\*\*/g, '$1')        // bold → text
-      .replace(/\*([^*\n]+)\*/g, '$1')          // italic → text
-      .replace(/__([^_]+)__/g, '$1')            // bold underscore → text
-      .replace(/_([^_\n]+)_/g, '$1')            // italic underscore → text
-      .replace(/^#{1,6}\s+/gm, '')              // headers → plain text
-      .replace(/`([^`]+)`/g, '$1')              // inline code → text only
-      .replace(/\|/g, ' ')                       // table pipes → space
-      .replace(/^>\s*/gm, '')                   // blockquotes → text
-      .replace(/^[-*]\s+/gm, '. ')             // list bullets → pause
-      .replace(/^[⚠️•●▸►]+\s*/gm, '')         // emoji/symbol bullets → remove
-      .replace(/[ \t]{2,}/g, ' ')               // collapse multiple spaces
-      .trim()
-      .slice(0, 900);
-    const utt   = new SpeechSynthesisUtterance(clean);
+    // No length cap — the full answer is spoken, chunk by chunk.
+    const chunks = chunkForSpeech(cleanForSpeech(text));
+    if (!chunks.length) { if (onEnd) setTimeout(onEnd, 50); return; }
+
+    const run   = ++speechRunRef.current;   // supersedes any in-flight chain
     const vs    = voicesRef.current;
     const pref  = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
                || vs.find(v => v.lang === 'en-GB')
                || vs.find(v => v.lang.startsWith('en'));
-    if (pref) utt.voice = pref;
-    utt.rate = 0.92; utt.pitch = 0.88;
-    utt.onstart = () => { setUiState('speaking'); setStatusText('SPEAKING'); };
-    utt.onend   = () => { setUiState('idle'); setStatusText('READY'); if (onEnd) setTimeout(onEnd, 50); };
-    utt.onerror = () => { setUiState('idle'); setStatusText('READY'); if (onEnd) setTimeout(onEnd, 50); };
-    synthRef.current.speak(utt);
+
+    // Runs once when the whole queue drains (or on error) — same state
+    // transitions the single-utterance version made on onend/onerror.
+    const finish = () => {
+      if (run !== speechRunRef.current) return;
+      setUiState('idle'); setStatusText('READY');
+      if (onEnd) setTimeout(onEnd, 50);
+    };
+
+    const speakChunk = (i) => {
+      if (run !== speechRunRef.current) return;   // superseded — stop silently
+      if (i >= chunks.length) { finish(); return; }
+      const utt = new SpeechSynthesisUtterance(chunks[i]);
+      if (pref) utt.voice = pref;
+      utt.rate = 0.92; utt.pitch = 0.88;
+      if (i === 0) utt.onstart = () => {
+        if (run === speechRunRef.current) { setUiState('speaking'); setStatusText('SPEAKING'); }
+      };
+      utt.onend   = () => speakChunk(i + 1);
+      utt.onerror = () => finish();
+      synthRef.current.speak(utt);
+    };
+
+    speakChunk(0);
   }, []);
 
   // ── Send message ──────────────────────────────────────────────────────────
