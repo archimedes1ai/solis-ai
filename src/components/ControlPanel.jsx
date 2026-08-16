@@ -3,7 +3,7 @@ import { LIFECYCLE_STAGES, AGENTS } from '../utils/constants.js';
 export default function ControlPanel({
   uiState, activeAgents, lifecycleStage, setLifecycleStage,
   meetingMode, toggleMeeting, wakeEnabled, toggleWake, wakeArmed,
-  voiceOut, setVoiceOut, onWhatAmIMissing, statusText, speechSupported,
+  voiceOut, setVoiceOut, onStopSpeaking, onWhatAmIMissing, statusText, speechSupported,
 }) {
   const stageIdx    = LIFECYCLE_STAGES.findIndex(s => s.id === lifecycleStage);
   const runningAgents = activeAgents.filter(a => a.status === 'running');
@@ -72,6 +72,12 @@ export default function ControlPanel({
             {voiceOut ? 'ON' : 'OFF'}
           </button>
         </div>
+
+        {uiState === 'speaking' && (
+          <button className="ctrl__btn ctrl__btn--stop" onClick={onStopSpeaking}>
+            ⏹ STOP SPEAKING
+          </button>
+        )}
       </div>
 
       <div className="ctrl__section">

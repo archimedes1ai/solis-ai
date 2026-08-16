@@ -304,6 +304,8 @@ input, textarea { font-family: inherit; }
 }
 .chat__voice:hover  { color: var(--cyan); }
 .chat__voice--on    { color: var(--green); animation: glow 1s ease-in-out infinite; }
+.chat__voice--stop  { color: var(--red); animation: glow 1s ease-in-out infinite; }
+.chat__voice--stop:hover { color: var(--red); }
 .chat__voice:disabled { opacity: .28; cursor: not-allowed; }
 
 .chat__clear {
@@ -446,6 +448,9 @@ input, textarea { font-family: inherit; }
 .ctrl__btn--wake-off { color: rgba(0,212,255,.38); }
 .ctrl__btn--wake-on  { color: rgba(0,255,170,.7); border-color: rgba(0,255,170,.32); background: rgba(0,255,170,.05); }
 .ctrl__btn--wake-arm { color: var(--green); border-color: rgba(0,255,170,.6); background: rgba(0,255,170,.08); animation: glow 2s infinite; }
+
+.ctrl__btn--stop     { color: var(--red); border-color: rgba(255,68,102,.5); background: rgba(255,40,60,.1); margin-top: 8px; animation: glow 1.5s infinite; }
+.ctrl__btn--stop:hover { border-color: rgba(255,68,102,.8); background: rgba(255,40,60,.18); }
 
 .ctrl__toggle {
   display: flex; align-items: center; justify-content: space-between;

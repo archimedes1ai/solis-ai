@@ -19,9 +19,37 @@ const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis|solace|hey\s+solace|morning\s+solace|afternoon\s+solace|evening\s+solace|good\s+morning\s+solace)\b/i;
 
 // Chrome/Edge silently truncate any single utterance at ~15 s, so long answers
-// are spoken as a queue of short chunks. ~140 chars at rate 0.92 lands well
-// inside that window with margin for slower voices.
-const SPEECH_CHUNK_LIMIT = 140;
+// are spoken as a queue of short chunks. ~180 chars at rate 1.0 lands inside
+// that window while keeping the number of seams down.
+const SPEECH_CHUNK_LIMIT = 180;
+
+// Conversational defaults. Natural/neural voices are tuned for pitch 1.0 —
+// pulling it down is what made the old settings sound synthetic.
+const SPEECH_RATE  = 1.0;
+const SPEECH_PITCH = 1.0;
+
+// Prefer a male-sounding voice as a tiebreak, matching the original character.
+// \bmale\b, not plain "male" — the latter also matches "Female".
+const MALE_VOICE_RE = /daniel|oliver|george|ryan|thomas|arthur|\bmale\b/i;
+
+// Rank available voices best-first. Tiers matter more than the name match:
+// a Natural/neural voice beats a legacy SAPI voice that happens to be "George".
+function pickVoice(voices) {
+  if (!voices || !voices.length) return null;
+  const score = (v) => {
+    if (!v.lang || !v.lang.startsWith('en')) return -1;
+    let s = 0;
+    if (v.lang === 'en-GB') s += 10;
+    if (/natural|neural/i.test(v.name)) s += 40;         // MS Online (Natural)
+    else if (/google uk english/i.test(v.name)) s += 30; // Chrome's best UK voice
+    else if (v.localService === false) s += 20;          // cloud > local SAPI
+    if (MALE_VOICE_RE.test(v.name)) s += 5;              // tiebreak only
+    return s;
+  };
+  return voices
+    .filter(v => score(v) >= 0)
+    .sort((a, b) => score(b) - score(a))[0] || null;
+}
 
 // Normalise model output for speech: markdown markers, symbols and URLs are
 // removed or spoken as words. Order matters — fenced code and links must go
@@ -118,6 +146,10 @@ export default function App() {
   const meetRecRef    = useRef(null);
   const synthRef      = useRef(window.speechSynthesis);
   const voicesRef     = useRef([]);
+  // Chosen voice, recomputed whenever the voice list changes. Cached so every
+  // chunk (and every answer) uses the same voice — including the first one,
+  // which previously fell back to the browser default on a cold load.
+  const voiceRef      = useRef(null);
   // Generation counter — bumped on every speak() call. A queued chunk chain
   // checks it and aborts if a newer run has superseded it, so a cancelled or
   // restarted utterance can never resume mid-queue.
@@ -148,7 +180,10 @@ export default function App() {
 
   // ── TTS voices ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const load = () => { voicesRef.current = synthRef.current.getVoices(); };
+    const load = () => {
+      voicesRef.current = synthRef.current.getVoices();
+      voiceRef.current  = pickVoice(voicesRef.current);
+    };
     load();
     synthRef.current.addEventListener('voiceschanged', load);
     return () => synthRef.current.removeEventListener('voiceschanged', load);
@@ -168,10 +203,8 @@ export default function App() {
     if (!chunks.length) { if (onEnd) setTimeout(onEnd, 50); return; }
 
     const run   = ++speechRunRef.current;   // supersedes any in-flight chain
-    const vs    = voicesRef.current;
-    const pref  = vs.find(v => v.lang === 'en-GB' && /daniel|oliver|george|male/i.test(v.name))
-               || vs.find(v => v.lang === 'en-GB')
-               || vs.find(v => v.lang.startsWith('en'));
+    // Late-load safety: if voices arrived after the last 'voiceschanged', pick now.
+    const voice = voiceRef.current || pickVoice(synthRef.current.getVoices());
 
     // Runs once when the whole queue drains (or on error) — same state
     // transitions the single-utterance version made on onend/onerror.
@@ -181,21 +214,33 @@ export default function App() {
       if (onEnd) setTimeout(onEnd, 50);
     };
 
-    const speakChunk = (i) => {
+    // Queue the next chunk from the current one's onstart, so the engine always
+    // has one buffered and plays them back-to-back with no audible JS gap.
+    // The queue stays two deep, which avoids the Chrome long-queue stall that
+    // pre-queueing every chunk would risk.
+    const sent = new Set();
+    const enqueue = (i) => {
       if (run !== speechRunRef.current) return;   // superseded — stop silently
-      if (i >= chunks.length) { finish(); return; }
+      if (i >= chunks.length || sent.has(i)) return;
+      sent.add(i);
       const utt = new SpeechSynthesisUtterance(chunks[i]);
-      if (pref) utt.voice = pref;
-      utt.rate = 0.92; utt.pitch = 0.88;
-      if (i === 0) utt.onstart = () => {
-        if (run === speechRunRef.current) { setUiState('speaking'); setStatusText('SPEAKING'); }
+      if (voice) utt.voice = voice;
+      utt.rate = SPEECH_RATE; utt.pitch = SPEECH_PITCH;
+      utt.onstart = () => {
+        if (run !== speechRunRef.current) return;
+        if (i === 0) { setUiState('speaking'); setStatusText('SPEAKING'); }
+        enqueue(i + 1);                     // buffer one ahead
       };
-      utt.onend   = () => speakChunk(i + 1);
+      utt.onend = () => {
+        if (run !== speechRunRef.current) return;
+        if (i === chunks.length - 1) finish();
+        else enqueue(i + 1);                // fallback if onstart never fired
+      };
       utt.onerror = () => finish();
       synthRef.current.speak(utt);
     };
 
-    speakChunk(0);
+    enqueue(0);
   }, []);
 
   // ── Send message ──────────────────────────────────────────────────────────
@@ -616,12 +661,36 @@ export default function App() {
   // ── Clear chat ────────────────────────────────────────────────────────────
   const onClearChat = useCallback(() => setMessages([]), []);
 
+  // ── Stop speech ───────────────────────────────────────────────────────────
+  // Bump the generation counter BEFORE cancelling: the in-flight chain's
+  // onstart/onend then see they are superseded and stop enqueueing. Without
+  // this, cancel() only clears the engine queue and the chain refills it.
+  // onEnd is deliberately not fired — the idle effect re-arms the wake word.
+  const stopSpeaking = useCallback(() => {
+    speechRunRef.current++;
+    synthRef.current.cancel();
+    setUiState(s => (s === 'speaking' ? 'idle' : s));
+    setStatusText('READY');
+  }, []);
+
+  // Escape stops speech from anywhere, as long as focus isn't in a text field.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (uiRef.current !== 'speaking') return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      stopSpeaking();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [stopSpeaking]);
+
   // ── Voice output toggle ───────────────────────────────────────────────────
   const toggleVoiceOut = useCallback(() => {
     setVoiceOut(v => { voiceOutRef.current = !v; return !v; });
-    synthRef.current.cancel();
-    if (uiState === 'speaking') setUiState('idle');
-  }, [uiState]);
+    stopSpeaking();
+  }, [stopSpeaking]);
 
   const micActive   = uiState === 'listening';
   const micDisabled = uiState !== 'idle' && uiState !== 'listening';
@@ -662,6 +731,7 @@ export default function App() {
               speechSupported={SR_SUPPORTED}
               error={error}
               onClearChat={onClearChat}
+              onStopSpeaking={stopSpeaking}
             />
             <button
               className="chat-toggle"
@@ -697,6 +767,7 @@ export default function App() {
             wakeArmed={wakeArmed}
             voiceOut={voiceOut}
             setVoiceOut={toggleVoiceOut}
+            onStopSpeaking={stopSpeaking}
             onWhatAmIMissing={handleMissing}
             statusText={statusText}
             speechSupported={SR_SUPPORTED}

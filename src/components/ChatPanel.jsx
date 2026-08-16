@@ -8,7 +8,7 @@ export default function ChatPanel({
   transcript, attachments, onAttach, onVoice,
   micActive, micDisabled, uiState, meetingMode,
   chatEndRef, inputRef, fileInputRef, onFileChange,
-  onRemoveAttachment, speechSupported, error, onClearChat,
+  onRemoveAttachment, speechSupported, error, onClearChat, onStopSpeaking,
 }) {
   const busy         = uiState === 'thinking' || uiState === 'uploading';
   const agentsBusy   = uiState === 'agents';
@@ -125,6 +125,16 @@ export default function ChatPanel({
             title={micActive ? 'Stop' : 'Voice input'}
           >
             {micActive ? '⏹' : '🎙'}
+          </button>
+        )}
+
+        {uiState === 'speaking' && (
+          <button
+            className="chat__voice chat__voice--stop"
+            onClick={onStopSpeaking}
+            title="Stop speaking (Esc)"
+          >
+            ⏹
           </button>
         )}
 
