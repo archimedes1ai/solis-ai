@@ -580,6 +580,21 @@ export default function App() {
       const isImage = mt.startsWith('image/');
       const isPDF   = mt === 'application/pdf';
       const isText  = mt.startsWith('text/') || mt === 'application/json' || /\.(csv|json|txt)$/i.test(f.name);
+
+      // Spreadsheets are attached as-is and kept: no reader runs, so there is
+      // nothing to fail and nothing to reject. parseBoq() reads `file` directly
+      // when PROCESS BoQ is clicked — extracting content is that button's job.
+      // Matched on SPREADSHEET_RE alone (not MIME) so the set of files attached
+      // here is exactly the set that enables the button via boqReady.
+      if (SPREADSHEET_RE.test(f.name)) {
+        next.push({
+          id: Date.now() + Math.random(), name: f.name, mediaType: mt,
+          data: null, content: null,
+          isImage: false, isPDF: false, isText: false, isSheet: true, file: f,
+        });
+        continue;
+      }
+
       try {
         const data    = isText ? null : await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
         const content = isText ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(f); }) : null;
