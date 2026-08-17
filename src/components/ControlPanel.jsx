@@ -4,6 +4,7 @@ export default function ControlPanel({
   uiState, activeAgents, lifecycleStage, setLifecycleStage,
   meetingMode, toggleMeeting, wakeEnabled, toggleWake, wakeArmed,
   voiceOut, setVoiceOut, onWhatAmIMissing, statusText, speechSupported,
+  onProcessBoq, boqReady,
 }) {
   const stageIdx    = LIFECYCLE_STAGES.findIndex(s => s.id === lifecycleStage);
   const runningAgents = activeAgents.filter(a => a.status === 'running');
@@ -65,6 +66,17 @@ export default function ControlPanel({
             {wakeEnabled ? '🔊' : '🔇'} {wakeEnabled ? (wakeArmed ? '"HEY SOLIS" ARMED' : '"HEY SOLIS" ON') : '"HEY SOLIS" OFF'}
           </button>
         )}
+
+        <button
+          className="ctrl__btn ctrl__btn--boq"
+          onClick={onProcessBoq}
+          disabled={!boqReady}
+          title={boqReady
+            ? 'Parse the attached bill of quantities'
+            : 'Attach an .xls or .xlsx bill of quantities first'}
+        >
+          📊 PROCESS BoQ
+        </button>
 
         <div className="ctrl__toggle">
           <span className="ctrl__toggle-lbl">VOICE OUTPUT</span>

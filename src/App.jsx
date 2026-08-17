@@ -8,6 +8,9 @@ import { dispatchAgents, getAgentById } from './utils/dispatcher.js';
 import { detectResearchMode, getResearchPrompt, detectDocumentMode } from './utils/researchAgent.js';
 import { AGENTS } from './utils/constants.js';
 import { runHarness } from './core/harness.js';
+// parseBoq is NOT imported statically — it pulls in SheetJS (~370 kB), which
+// would land in the main bundle. It is dynamically imported in handleProcessBoq
+// so it only downloads when PROCESS BoQ is actually clicked.
 
 // Harness orchestration layer — off by default. When false the send path is
 // byte-for-byte the original single callSolis call.
@@ -17,6 +20,66 @@ const SR_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecogniti
 const IS_MOBILE    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 // Matches "hey solis", "hi solis", "ok solis", bare "solis", etc.
 const WAKE_RE      = /\b(hey\s+solis|hello\s+solis|ok\s+solis|hi\s+solis|oi\s+solis|solis|solace|hey\s+solace|morning\s+solace|afternoon\s+solace|evening\s+solace|good\s+morning\s+solace)\b/i;
+
+// Spreadsheet attachments are the only ones parseBoq() can read.
+const SPREADSHEET_RE = /\.(xlsx|xls)$/i;
+
+// Turn parseBoq()'s output into a readable bill SOLIS can reason over end to end:
+// a header block of totals, then each unit's items grouped under their worktype,
+// then the flags. Kept as plain text (not markdown tables) so it survives the
+// speech-cleaning pass and stays legible in the transcript.
+function formatBoqSummary(fileName, { units, lines, flags, skipped }) {
+  const out = [];
+  out.push('BILL OF QUANTITIES — PARSED FROM SPREADSHEET');
+  out.push(`File: ${fileName}`);
+  out.push(`Units found: ${units.length ? units.join(', ') : 'none identified'}`);
+  out.push(`Measured items: ${lines.length} · Rows skipped: ${skipped} · Flags raised: ${flags.length}`);
+
+  // Prefer the parser's unit order; fall back to the order items appeared in.
+  const unitKeys = units.length ? units : [...new Set(lines.map(l => l.unit))];
+
+  for (const u of unitKeys) {
+    const unitLines = lines.filter(l => l.unit === u);
+    out.push('');
+    out.push(`── UNIT ${u} — ${unitLines.length} item(s) ──`);
+    let lastWorktype;
+    for (const l of unitLines) {
+      if (l.worktype !== lastWorktype) {
+        out.push(`  ${l.worktype || '(no worktype stated)'}`);
+        lastWorktype = l.worktype;
+      }
+      const desc = String(l.desc || '').replace(/\s+/g, ' ').trim();
+      const meas = [l.qty, l.uom].filter(v => v !== null && v !== undefined && v !== '').join(' ');
+      out.push(`    ${l.ref} · ${desc} · ${meas || 'no quantity'}`);
+    }
+  }
+
+  // Anything the parser produced without a recognised unit heading.
+  const orphans = lines.filter(l => !unitKeys.includes(l.unit));
+  if (orphans.length) {
+    out.push('');
+    out.push(`── ITEMS WITH NO UNIT HEADING — ${orphans.length} item(s) ──`);
+    for (const l of orphans) {
+      const desc = String(l.desc || '').replace(/\s+/g, ' ').trim();
+      const meas = [l.qty, l.uom].filter(v => v !== null && v !== undefined && v !== '').join(' ');
+      out.push(`    ${l.ref} · ${desc} · ${meas || 'no quantity'}`);
+    }
+  }
+
+  out.push('');
+  if (flags.length) {
+    out.push(`── FLAGS RAISED (${flags.length}) ──`);
+    for (const f of flags) {
+      out.push(`    [${f.type}] Unit ${f.unit ?? '—'} ref ${f.ref} — ${f.message}`);
+    }
+  } else {
+    out.push('── FLAGS RAISED: none ──');
+  }
+
+  out.push('');
+  out.push('Review this bill: address the flagged items, identify anything missing, ambiguous or commercially risky, and state what further information is needed.');
+  return out.join('\n');
+}
 
 export default function App() {
   // ── State ─────────────────────────────────────────────────────────────────
@@ -520,11 +583,47 @@ export default function App() {
       try {
         const data    = isText ? null : await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
         const content = isText ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(f); }) : null;
-        next.push({ id: Date.now() + Math.random(), name: f.name, mediaType: mt, data, content, isImage, isPDF, isText });
+        // `file` keeps the original File so parseBoq() can read it as an
+        // ArrayBuffer later — `data` is base64 and would need decoding.
+        next.push({ id: Date.now() + Math.random(), name: f.name, mediaType: mt, data, content, isImage, isPDF, isText, file: f });
       } catch { setError(`Could not read ${f.name}.`); }
     }
     setAttachments(prev => [...prev, ...next]);
   }, []);
+
+  // ── Process BoQ ───────────────────────────────────────────────────────────
+  // Parses the attached spreadsheet client-side, then sends the structured
+  // result into the chat through the normal send path.
+  const handleProcessBoq = useCallback(async () => {
+    const boq = attachments.find(a => SPREADSHEET_RE.test(a.name));
+    if (!boq) { setError('Attach an .xls or .xlsx bill of quantities first.'); return; }
+
+    let summary;
+    try {
+      // Loaded on demand — keeps SheetJS out of the initial page load. Inside
+      // the try so a failed chunk fetch surfaces as the same friendly error.
+      const { parseBoq } = await import('./utils/parseBoq.js');
+      const buf = boq.file
+        ? await boq.file.arrayBuffer()
+        : Uint8Array.from(atob(boq.data), c => c.charCodeAt(0)).buffer;  // fallback: decode base64
+      const result = parseBoq(buf);
+      if (!result.lines.length) {
+        setError(`No measured items found in "${boq.name}" — check it is a contractor BoQ with a Pages sheet.`);
+        return;
+      }
+      summary = formatBoqSummary(boq.name, result);
+    } catch (e) {
+      setError(`Could not parse "${boq.name}": ${e.message || 'unreadable spreadsheet'}`);
+      return;
+    }
+
+    // Drop the spreadsheet before sending — sendMessage cannot turn it into a
+    // content block and would flag it as unreadable. The send is deferred one
+    // tick so sendRef points at a sendMessage closed over the cleared tray.
+    setAttachments(prev => prev.filter(a => a.id !== boq.id));
+    setError('');
+    setTimeout(() => sendRef.current?.(summary), 0);
+  }, [attachments]);
 
   // ── What am I missing ─────────────────────────────────────────────────────
   const handleMissing = useCallback(() => {
@@ -620,6 +719,8 @@ export default function App() {
             voiceOut={voiceOut}
             setVoiceOut={toggleVoiceOut}
             onWhatAmIMissing={handleMissing}
+            onProcessBoq={handleProcessBoq}
+            boqReady={attachments.some(a => SPREADSHEET_RE.test(a.name))}
             statusText={statusText}
             speechSupported={SR_SUPPORTED}
           />
